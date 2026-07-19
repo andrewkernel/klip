@@ -4,7 +4,7 @@ param(
   [string]$BuildDirectory,
   [Parameter(Mandatory = $true)]
   [string]$FfmpegRoot,
-  [string]$Version = "0.3.0",
+  [string]$Version = "",
   [string]$OutputDirectory = "",
   [string]$VcpkgInstalledDirectory = "",
   [string]$InnoSetupCompiler = "",
@@ -15,11 +15,14 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+$repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+if ([string]::IsNullOrWhiteSpace($Version)) {
+  $Version = & (Join-Path $PSScriptRoot "resolve-version.ps1")
+}
 if ($Version -notmatch '^\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.-]+)?$') {
   throw "Version must be a filesystem-safe semantic version, for example 0.3.0 or 0.3.0-beta.1."
 }
 
-$repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $buildRoot = (Resolve-Path $BuildDirectory).Path
 $ffmpegPath = (Resolve-Path $FfmpegRoot).Path
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
@@ -106,10 +109,10 @@ Compress-Archive -Path (Join-Path $stageRoot "*") -DestinationPath $portableArch
   -CompressionLevel Optimal
 
 if (-not $SkipInstaller -and [string]::IsNullOrWhiteSpace($InnoSetupCompiler)) {
-  $candidate = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-  if (Test-Path -LiteralPath $candidate) {
-    $InnoSetupCompiler = $candidate
-  }
+  $InnoSetupCompiler = @(
+    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+    "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
+  ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
 }
 if (-not $SkipInstaller -and [string]::IsNullOrWhiteSpace($InnoSetupCompiler)) {
   throw "Inno Setup 6 was not found. Install it, pass -InnoSetupCompiler, or explicitly use -SkipInstaller."

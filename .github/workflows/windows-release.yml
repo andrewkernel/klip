@@ -26,12 +26,11 @@ jobs:
       - name: Resolve version
         shell: pwsh
         run: |
-          if ("${{ github.ref_type }}" -eq "tag") {
-            $version = "${{ github.ref_name }}".TrimStart("v")
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $version = .\packaging\resolve-version.ps1 `
+              -ReleaseTag $env:GITHUB_REF_NAME
           } else {
-            $match = [regex]::Match((Get-Content CMakeLists.txt -Raw), "project\(Klip VERSION ([0-9.]+)")
-            if (-not $match.Success) { throw "Could not read project version" }
-            $version = $match.Groups[1].Value
+            $version = .\packaging\resolve-version.ps1
           }
           "KLIP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
 
@@ -90,11 +89,14 @@ jobs:
           WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERTIFICATE_BASE64)) {
-            if ("${{ github.ref_type }}" -eq "tag") {
+            if ($env:GITHUB_REF_TYPE -eq "tag") {
               throw "Tagged public releases require WINDOWS_SIGNING_CERTIFICATE_BASE64 and WINDOWS_SIGNING_CERTIFICATE_PASSWORD secrets."
             }
             Write-Host "No signing certificate configured; workflow artifact will be unsigned."
             exit 0
+          }
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD)) {
+            throw "WINDOWS_SIGNING_CERTIFICATE_PASSWORD is required when a signing certificate is configured."
           }
           $certificate = Join-Path $env:RUNNER_TEMP "klip-signing.pfx"
           [IO.File]::WriteAllBytes($certificate,

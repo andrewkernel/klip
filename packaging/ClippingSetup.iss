@@ -1,6 +1,6 @@
 #define AppName "Klip"
 #ifndef AppVersion
-  #define AppVersion "0.3.0"
+  #error AppVersion must be supplied by package-win64.ps1
 #endif
 #define AppPublisher "Andrewkernel"
 #define AppUrl "https://github.com/andrewkernel/klip"

@@ -2,8 +2,8 @@
 
 ## Automated release
 
-1. Update the version in `CMakeLists.txt`, `vcpkg.json`, the installer fallback, and the
-   packaging script fallback.
+1. Update the version in `CMakeLists.txt` and `vcpkg.json`. The shared resolver rejects a
+   mismatch, and packaging derives installer and artifact versions from those files.
 2. Review `EULA.txt` and `PRIVACY.md`; update their effective dates when terms or data
    handling change.
 3. Push a tag such as `v0.3.0`.
@@ -24,6 +24,21 @@ Tagged releases are blocked unless the repository has both
 `WINDOWS_SIGNING_CERTIFICATE_BASE64` (a base64-encoded PFX) and
 `WINDOWS_SIGNING_CERTIFICATE_PASSWORD` secrets. The workflow signs and timestamp-verifies
 both `Klip.exe` and the installer. Manual workflow artifacts may remain unsigned for testing.
+
+Add those values as GitHub Actions repository secrets under **Settings > Secrets and
+variables > Actions**. Convert the PFX bytes to base64 locally and place only that encoded
+value in `WINDOWS_SIGNING_CERTIFICATE_BASE64`; place its password in the separate password
+secret. Never commit the PFX, its base64 representation, or its password. Restrict access to
+the certificate and rotate both secrets if it may have been exposed.
+
+The release tag must have the exact form `vMAJOR.MINOR.PATCH` and must match the version in
+`CMakeLists.txt` and `vcpkg.json`. The workflow checks this before downloading or compiling
+dependencies, so a mismatched tag cannot publish misleading filenames or version metadata.
+
+If a tag workflow fails, fix the underlying commit and use a new patch version/tag. Do not
+move or reuse a tag that has already been published: immutable release identifiers make
+checksums, support reports, and update history auditable. A GitHub Release is created only
+after signing, package startup checks, source-compliance bundling, and artifact upload pass.
 
 ## Release gate
 
