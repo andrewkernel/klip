@@ -1,0 +1,116 @@
+KLIP END USER LICENSE AGREEMENT
+Version 1.0 — Effective July 19, 2026
+
+IMPORTANT: PLEASE READ THIS AGREEMENT CAREFULLY. BY INSTALLING, COPYING, OR USING
+KLIP, YOU AGREE TO BE BOUND BY THESE TERMS. IF YOU DO NOT AGREE, DO NOT INSTALL
+OR USE KLIP.
+
+1. PARTIES AND SOFTWARE
+
+This End User License Agreement ("Agreement") is between you and Andrewkernel
+("Licensor") and governs your use of the Klip desktop application, installer,
+updates, and accompanying documentation (collectively, the "Software").
+
+2. LICENSE GRANT
+
+Subject to this Agreement, Licensor grants you a limited, non-exclusive,
+non-transferable, revocable license to install and use the Software on Windows
+computers that you own or control, solely for lawful personal or internal
+business purposes.
+
+3. RESTRICTIONS
+
+Except where applicable law expressly permits otherwise, you may not:
+
+  a. sell, sublicense, rent, lease, distribute, or commercially host the
+     Software without Licensor's written permission;
+  b. reverse engineer, decompile, disassemble, or attempt to derive the source
+     code of the Software;
+  c. remove or alter copyright, license, trademark, or attribution notices;
+  d. use the Software to violate law, infringe intellectual-property or privacy
+     rights, bypass access controls, or record content you are not authorized to
+     record; or
+  e. use the Software in safety-critical systems where failure could reasonably
+     result in death, personal injury, or severe property or environmental harm.
+
+4. RECORDING RESPONSIBILITY
+
+You are solely responsible for obtaining any permission required to capture
+gameplay, audio, voice communications, or other content. Recording laws and
+platform rules vary by location and service. Klip does not grant you rights in
+third-party content.
+
+5. LOCAL DATA AND PRIVACY
+
+The current version of Klip records media, settings, and diagnostic logs locally
+on your computer. It does not include an account system, cloud upload, analytics,
+advertising, or telemetry. The accompanying Privacy Notice describes the current
+behavior. Future features that materially change data handling will require an
+updated notice and, where required, renewed consent.
+
+6. THIRD-PARTY SOFTWARE
+
+The Software includes or links to third-party components governed by their own
+licenses, including FFmpeg and Dear ImGui. Those licenses and notices are provided
+with the Software and in THIRD_PARTY_NOTICES.md. Third-party license terms control
+to the extent they apply to the corresponding third-party component.
+
+7. UPDATES AND CHANGES
+
+Licensor may provide updates, fixes, or new versions. Updates may change or remove
+features and may be subject to updated terms. Licensor is not obligated to provide
+support, maintenance, updates, or continued availability.
+
+8. OWNERSHIP
+
+The Software is licensed, not sold. Licensor and its licensors retain all right,
+title, and interest in the Software not expressly granted by this Agreement.
+
+9. TERMINATION
+
+This Agreement terminates automatically if you materially breach it. Upon
+termination, you must stop using and remove the Software. Sections that by their
+nature should survive termination, including ownership, warranty disclaimer,
+limitation of liability, and third-party terms, will survive.
+
+10. DISCLAIMER OF WARRANTIES
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE SOFTWARE IS PROVIDED "AS IS" AND "AS
+AVAILABLE," WITH ALL FAULTS AND WITHOUT WARRANTIES OF ANY KIND. LICENSOR DISCLAIMS
+ALL EXPRESS, IMPLIED, AND STATUTORY WARRANTIES, INCLUDING MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, TITLE, NON-INFRINGEMENT, QUIET ENJOYMENT, AND THAT THE
+SOFTWARE WILL BE ERROR-FREE, SECURE, OR COMPATIBLE WITH EVERY GAME, DRIVER, GPU,
+OR COMPUTER. SOME JURISDICTIONS DO NOT ALLOW CERTAIN DISCLAIMERS, SO SOME OF THESE
+TERMS MAY NOT APPLY TO YOU.
+
+11. LIMITATION OF LIABILITY
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, LICENSOR AND CONTRIBUTORS WILL NOT BE
+LIABLE FOR INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE
+DAMAGES, OR FOR LOST DATA, LOST PROFITS, BUSINESS INTERRUPTION, OR FAILED
+RECORDINGS, ARISING FROM OR RELATED TO THE SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY. LICENSOR'S TOTAL LIABILITY FOR ALL CLAIMS WILL NOT EXCEED THE GREATER
+OF THE AMOUNT YOU PAID FOR THE SOFTWARE DURING THE TWELVE MONTHS BEFORE THE CLAIM
+OR US$10.00. NOTHING IN THIS AGREEMENT EXCLUDES LIABILITY THAT CANNOT LEGALLY BE
+EXCLUDED OR LIMITED.
+
+12. EXPORT AND SANCTIONS COMPLIANCE
+
+You may not use, export, or re-export the Software in violation of applicable
+export-control or sanctions laws.
+
+13. SEVERABILITY; WAIVER; ENTIRE AGREEMENT
+
+If a provision is unenforceable, it will be enforced to the maximum lawful extent
+and the remaining provisions will remain effective. A failure to enforce a term is
+not a waiver. This Agreement, the Privacy Notice, and applicable third-party notices
+are the entire agreement concerning the Software and replace prior discussions about
+its licensing.
+
+14. CONTACT
+
+Questions about this Agreement may be submitted at:
+https://github.com/andrewkernel/klip/issues
+
+This EULA is a project-provided software agreement and should be reviewed by
+qualified legal counsel before broad commercial distribution.

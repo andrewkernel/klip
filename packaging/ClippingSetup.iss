@@ -1,53 +1,60 @@
 #define AppName "Klip"
-#define AppVersion "0.1.0"
-#define AppPublisher "Klip"
-#define AppExeName "klip_core.exe"
-#define BuildRoot "..\build-vs\Release"
+#ifndef AppVersion
+  #error AppVersion must be supplied by package-win64.ps1
+#endif
+#define AppPublisher "Andrewkernel"
+#define AppUrl "https://github.com/andrewkernel/klip"
+#define AppExeName "Klip.exe"
+#ifndef BuildRoot
+  #define BuildRoot "..\build\Release"
+#endif
+#ifndef OutputRoot
+  #define OutputRoot "."
+#endif
 
 [Setup]
 AppId={{8A44B102-4E2D-4701-B01E-0B43D5C6C5A8}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
-DefaultDirName={autopf}\{#AppName}
+AppPublisherURL={#AppUrl}
+AppSupportURL={#AppUrl}/issues
+AppUpdatesURL={#AppUrl}/releases
+VersionInfoCompany={#AppPublisher}
+VersionInfoDescription=Klip game capture and replay recorder
+VersionInfoCopyright=Copyright (C) 2026 Andrewkernel
+DefaultDirName={localappdata}\Programs\{#AppName}
 DefaultGroupName={#AppName}
+DisableProgramGroupPage=yes
 UninstallDisplayIcon={app}\{#AppExeName}
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-Compression=lzma2
+Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
-OutputDir=.
-OutputBaseFilename=ClippingSetup
-PrivilegesRequired=admin
+OutputDir={#OutputRoot}
+OutputBaseFilename=Klip-{#AppVersion}-win64-setup
+PrivilegesRequired=lowest
+MinVersion=10.0.18362
+CloseApplications=yes
+RestartApplications=no
+AppMutex=Andrewkernel.Klip
+LicenseFile={#BuildRoot}\EULA.txt
+SetupIconFile=..\assets\klip.ico
+WizardImageStretch=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"
-
-[Dirs]
-Name: "{app}\clips"
+Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"
 
 [Files]
-Source: "{#BuildRoot}\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildRoot}\avcodec-62.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildRoot}\avdevice-62.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildRoot}\avfilter-11.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildRoot}\avformat-62.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildRoot}\avutil-60.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildRoot}\swresample-6.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildRoot}\swscale-9.dll"; DestDir: "{app}"; Flags: ignoreversion
-; Optional if you choose to bundle the VC++ runtime installer:
-; Source: "vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
+Source: "{#BuildRoot}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
-Name: "{group}\Clips Folder"; Filename: "{app}\clips"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
-; Optional VC++ runtime install:
-; Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing Microsoft Visual C++ Runtime..."; Flags: waituntilterminated
