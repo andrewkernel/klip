@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "klip-ffmpeg-sdk",
+  "version-string": "8.1.2",
+  "builtin-baseline": "908da3a305a0a8028d9602ab241b433652b3df69",
+  "dependencies": [
+    {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": [
+        "amf",
+        "avcodec",
+        "avformat",
+        "ffmpeg",
+        "nvcodec",
+        "swresample"
+      ]
+    }
+  ]
+}
