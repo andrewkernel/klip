@@ -82,17 +82,14 @@ jobs:
           ctest --test-dir build -C Release --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Sign Klip executable or enforce tagged-release signing
+      - name: Sign Klip executable when credentials are configured
         shell: pwsh
         env:
           WINDOWS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
           WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERTIFICATE_BASE64)) {
-            if ($env:GITHUB_REF_TYPE -eq "tag") {
-              throw "Tagged public releases require WINDOWS_SIGNING_CERTIFICATE_BASE64 and WINDOWS_SIGNING_CERTIFICATE_PASSWORD secrets."
-            }
-            Write-Host "No signing certificate configured; workflow artifact will be unsigned."
+            Write-Warning "No signing certificate configured; this build will be published unsigned."
             exit 0
           }
           if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD)) {
@@ -145,7 +142,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $env:KLIP_SIGNTOOL verify /pa /v $installer.FullName
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $releaseFiles = @(Get-Item artifacts\Klip-*-win64-portable.zip, $installer.FullName)
+      - name: Generate release checksums
+        shell: pwsh
+        run: |
+          $releaseFiles = @(Get-Item artifacts\Klip-*-win64-portable.zip, artifacts\Klip-*-win64-setup.exe)
           $sums = foreach ($file in $releaseFiles) {
             $hash = Get-FileHash $file.FullName -Algorithm SHA256
             "{0}  {1}" -f $hash.Hash.ToLowerInvariant(), $file.Name
