@@ -3,10 +3,16 @@
 #include <dwmapi.h>
 // MinGW's WinRT ABI headers typedef both BYTE and boolean to unsigned char, which makes their
 // IReference specializations collide in C++. C++/WinRT uses bool for the WinRT Boolean ABI.
+// MSVC's Windows SDK declares ABI::Windows::Foundation::boolean as a real type, so replacing it
+// there would produce the invalid qualified name ABI::Windows::Foundation::bool.
+#if defined(__MINGW32__) || defined(__MINGW64__)
 #define boolean bool
+#endif
 #include <windows.graphics.capture.interop.h>
 #include <windows.graphics.directx.direct3d11.interop.h>
+#if defined(__MINGW32__) || defined(__MINGW64__)
 #undef boolean
+#endif
 
 #include <algorithm>
 #include <exception>

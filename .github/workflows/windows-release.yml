@@ -73,12 +73,15 @@ jobs:
             -DVCPKG_TARGET_TRIPLET=x64-windows-static `
             -DFFMPEG_ROOT="$env:FFMPEG_ROOT" `
             -DKLIP_BUILD_TESTS=ON
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build and test
         shell: pwsh
         run: |
           cmake --build build --config Release --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ctest --test-dir build -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Sign Klip executable or enforce tagged-release signing
         shell: pwsh
