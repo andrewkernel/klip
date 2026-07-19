@@ -14,6 +14,12 @@ ctest --test-dir build -C Release --output-on-failure
 
 `klip_tests` covers default/invalid configuration, persisted-settings round trips, bounded queue overflow, queue closure, complete audio-frame coverage, keyframe-aware clip selection, timestamp rebasing, configured encoder priority, and coherent concurrent state snapshots.
 
+The Win64 release workflow also runs `Klip.exe --package-smoke-test` from both a silent
+per-user installation and an extracted portable ZIP on a clean GitHub Windows runner. This
+verifies Windows loader/DLL resolution and isolated first-run settings creation before the
+installer is uninstalled. It intentionally does not claim hardware capture validation on the
+hosted VM; vendor GPU, WGC, WASAPI, and media-quality coverage remains in the checklist below.
+
 Set `KLIP_DATA_ROOT` to an isolated directory for smoke tests that must not touch the normal
 LocalAppData/Videos locations. The override affects settings, logs, clips, and recordings only.
 

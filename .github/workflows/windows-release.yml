@@ -168,6 +168,29 @@ jobs:
               throw "Installed package is missing $pattern"
             }
           }
+
+          function Invoke-KlipPackageSmoke([string]$executable, [string]$dataRoot) {
+            $env:KLIP_DATA_ROOT = $dataRoot
+            $process = Start-Process $executable -ArgumentList "--package-smoke-test" `
+              -WindowStyle Hidden -PassThru -Wait
+            if ($process.ExitCode -ne 0) {
+              throw "$executable package smoke test exited with $($process.ExitCode)"
+            }
+            if (-not (Test-Path (Join-Path $dataRoot "settings.ini") -PathType Leaf)) {
+              throw "$executable did not create first-run settings"
+            }
+          }
+
+          Invoke-KlipPackageSmoke (Join-Path $installRoot "Klip.exe") `
+            (Join-Path $env:RUNNER_TEMP "Klip-installed-data-smoke")
+
+          $portableRoot = Join-Path $env:RUNNER_TEMP "Klip-portable-smoke"
+          Expand-Archive (Get-Item "artifacts\Klip-*-win64-portable.zip").FullName `
+            -DestinationPath $portableRoot
+          Invoke-KlipPackageSmoke (Join-Path $portableRoot "Klip.exe") `
+            (Join-Path $env:RUNNER_TEMP "Klip-portable-data-smoke")
+          Remove-Item Env:KLIP_DATA_ROOT -ErrorAction SilentlyContinue
+
           $uninstaller = Join-Path $installRoot "unins000.exe"
           $process = Start-Process $uninstaller `
             -ArgumentList @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART") `

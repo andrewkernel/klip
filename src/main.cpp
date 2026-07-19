@@ -5,6 +5,7 @@
 #include <exception>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <utility>
 
 extern "C" {
@@ -25,10 +26,28 @@ class ProcessApartment {
   ProcessApartment& operator=(const ProcessApartment&) = delete;
 };
 
+bool HasCommandLineFlag(PWSTR command_line, std::wstring_view flag) {
+  if (command_line == nullptr || flag.empty()) return false;
+  const std::wstring_view arguments(command_line);
+  std::size_t position = 0;
+  while ((position = arguments.find(flag, position)) != std::wstring_view::npos) {
+    const bool starts_token = position == 0 || arguments[position - 1] == L' ' ||
+                              arguments[position - 1] == L'\t';
+    const auto end = position + flag.size();
+    const bool ends_token = end == arguments.size() || arguments[end] == L' ' ||
+                            arguments[end] == L'\t';
+    if (starts_token && ends_token) return true;
+    position = end;
+  }
+  return false;
+}
+
 }  // namespace
 
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_command) {
   try {
+    const bool package_smoke_test =
+        HasCommandLineFlag(command_line, L"--package-smoke-test");
     ProcessApartment apartment;
     av_log_set_level(AV_LOG_ERROR);
     ImGui_ImplWin32_EnableDpiAwareness();
@@ -46,6 +65,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
       MessageBoxA(nullptr, settings_diagnostic.c_str(), "Klip settings warning",
                   MB_OK | MB_ICONWARNING);
     }
+
+    // The release workflow runs this from both the installed and portable packages on a clean
+    // Windows runner. Reaching here proves the executable loader resolved every imported DLL and
+    // that first-run path/config initialization works, without pretending a VM without gaming
+    // hardware can validate WGC, WASAPI, or a vendor H.264 encoder.
+    if (package_smoke_test) return 0;
 
     klip::KlipApplication application(std::move(config), user_paths.settings_file);
     klip::Error error;
