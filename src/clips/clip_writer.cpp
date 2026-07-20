@@ -83,7 +83,17 @@ void ClipWriter::Worker(std::stop_token stop_token) noexcept {
                       "video encoder is not ready"};
       } else {
         const auto has_audio = audio_snapshot_ && audio_snapshot_(audio);
+        // A clip requested immediately after capture starts can arrive before the
+        // encoder has emitted its first keyframe. Give the rolling buffer a short
+        // warm-up window instead of failing the user-visible clip operation.
         auto packets = buffer_.Snapshot(request.duration_seconds);
+        constexpr auto kKeyframeWarmup = std::chrono::seconds(5);
+        const auto warmup_deadline = std::chrono::steady_clock::now() + kKeyframeWarmup;
+        while (packets.empty() && !stop_token.stop_requested() &&
+               std::chrono::steady_clock::now() < warmup_deadline) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(100));
+          packets = buffer_.Snapshot(request.duration_seconds);
+        }
         if (packets.empty()) {
           error = Error{ErrorComponent::kClipWriter, "select clip range",
                         "the rolling buffer does not yet contain a keyframe"};
