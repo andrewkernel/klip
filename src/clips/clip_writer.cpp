@@ -66,6 +66,7 @@ bool ClipWriter::RequestClip() {
 
 void ClipWriter::Worker(std::stop_token stop_token) noexcept {
   try {
+    SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
     Request request;
     while (requests_.WaitPop(request, stop_token)) {
       const auto previous_state = state_.Snapshot();

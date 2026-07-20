@@ -74,6 +74,11 @@ void VideoEncoder::RestartTimeline() noexcept {
   ReleaseCodec();
 }
 
+bool VideoEncoder::Prepare(std::uint32_t width, std::uint32_t height, Error& error) {
+  std::scoped_lock lock(mutex_);
+  return EnsureOpen(width, height, error);
+}
+
 bool VideoEncoder::Encode(ID3D11Texture2D* texture, std::uint32_t width, std::uint32_t height,
                           std::int64_t pts_100ns, TextureRecycler recycler, Error& error) {
   std::scoped_lock lock(mutex_);
@@ -204,6 +209,12 @@ bool VideoEncoder::EnsureOpen(std::uint32_t width, std::uint32_t height, Error& 
   if (codec_ != nullptr && width == width_ && height == height_) {
     return true;
   }
+  const auto now = std::chrono::steady_clock::now();
+  if (codec_ == nullptr && width == failed_width_ && height == failed_height_ &&
+      now < next_open_attempt_) {
+    error = last_open_error_;
+    return false;
+  }
   const bool replacing_codec = codec_ != nullptr;
   FlushLocked();
   if (replacing_codec) router_.ResetTimeline();
@@ -216,6 +227,10 @@ bool VideoEncoder::EnsureOpen(std::uint32_t width, std::uint32_t height, Error& 
   for (const auto& candidate : BuildPreference()) {
     Error candidate_error;
     if (TryOpen(candidate, width, height, candidate_error)) {
+      next_open_attempt_ = {};
+      failed_width_ = 0;
+      failed_height_ = 0;
+      last_open_error_ = {};
       state_.SetEncoder(candidate);
       state_.ClearError();
       logger_.Info("Selected video encoder: " + candidate);
@@ -225,6 +240,10 @@ bool VideoEncoder::EnsureOpen(std::uint32_t width, std::uint32_t height, Error& 
   }
   error = Error{ErrorComponent::kVideoEncoder, "select encoder",
                 "no configured hardware H.264 encoder accepted D3D11 input"};
+  last_open_error_ = error;
+  failed_width_ = width;
+  failed_height_ = height;
+  next_open_attempt_ = now + std::chrono::seconds(5);
   return false;
 }
 
@@ -352,6 +371,10 @@ void VideoEncoder::ReleaseCodec() noexcept {
   }
   width_ = 0;
   height_ = 0;
+  next_open_attempt_ = {};
+  failed_width_ = 0;
+  failed_height_ = 0;
+  last_open_error_ = {};
   state_.SetEncoder({});
 }
 
@@ -365,12 +388,15 @@ void VideoEncoder::SetOptions(AVDictionary** options, const std::string& name, s
   av_dict_set(options, "bf", "0", 0);
   if (StartsWith(name, "h264_nvenc")) {
     const char* preset = quality == EncoderQuality::kPerformance ? "p3"
-                         : quality == EncoderQuality::kQuality   ? "p6"
-                                                                : "p5";
+                         : quality == EncoderQuality::kQuality   ? "p5"
+                                                                : "p4";
     av_dict_set(options, "preset", preset, 0);
     av_dict_set(options, "tune", "ll", 0);
     av_dict_set(options, "rc", "cbr", 0);
     av_dict_set(options, "rc-lookahead", "0", 0);
+    av_dict_set(options, "multipass", "disabled", 0);
+    av_dict_set(options, "spatial-aq", "0", 0);
+    av_dict_set(options, "temporal-aq", "0", 0);
     av_dict_set(options, "delay", "0", 0);
     av_dict_set(options, "surfaces", "4", 0);
     av_dict_set(options, "zerolatency", "1", 0);

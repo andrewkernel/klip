@@ -19,9 +19,16 @@ bool RollingMediaBuffer::Push(const AVPacket* packet, StreamKind kind, AVRationa
   }
 
   const auto packet_bytes = clone->size > 0 ? static_cast<std::size_t>(clone->size) : 0;
+  EncodedPacket encoded{std::move(clone), kind, time_base};
+  const auto descriptor = DescribePacket(encoded);
   std::scoped_lock lock(mutex_);
-  packets_.push_back(EncodedPacket{std::move(clone), kind, time_base});
+  packets_.push_back(std::move(encoded));
   bytes_ += packet_bytes;
+  if (kind == StreamKind::kVideo) {
+    if (!has_video_) first_video_pts_100ns_ = descriptor.pts_100ns;
+    last_video_pts_100ns_ = descriptor.pts_100ns;
+    has_video_ = true;
+  }
   EvictLocked();
   return true;
 }
@@ -67,22 +74,9 @@ std::vector<EncodedPacket> RollingMediaBuffer::Snapshot(double seconds) const {
 RollingBufferStats RollingMediaBuffer::Stats() const {
   std::scoped_lock lock(mutex_);
   RollingBufferStats stats{packets_.size(), bytes_, 0.0};
-  std::int64_t first = 0;
-  std::int64_t last = 0;
-  bool found = false;
-  for (const auto& packet : packets_) {
-    if (packet.kind != StreamKind::kVideo || !packet.packet) {
-      continue;
-    }
-    const auto pts = DescribePacket(packet).pts_100ns;
-    if (!found) {
-      first = pts;
-      found = true;
-    }
-    last = pts;
-  }
-  if (found && last >= first) {
-    stats.duration_seconds = static_cast<double>(last - first) / 10'000'000.0;
+  if (has_video_ && last_video_pts_100ns_ >= first_video_pts_100ns_) {
+    stats.duration_seconds =
+        static_cast<double>(last_video_pts_100ns_ - first_video_pts_100ns_) / 10'000'000.0;
   }
   return stats;
 }
@@ -91,9 +85,13 @@ void RollingMediaBuffer::Clear() {
   std::scoped_lock lock(mutex_);
   packets_.clear();
   bytes_ = 0;
+  first_video_pts_100ns_ = 0;
+  last_video_pts_100ns_ = 0;
+  has_video_ = false;
 }
 
 void RollingMediaBuffer::EvictLocked() {
+  bool removed_video = false;
   while (!packets_.empty()) {
     const auto first = DescribePacket(packets_.front()).pts_100ns;
     const auto last = DescribePacket(packets_.back()).pts_100ns;
@@ -104,7 +102,23 @@ void RollingMediaBuffer::EvictLocked() {
                           ? static_cast<std::size_t>(packets_.front().packet->size)
                           : 0;
     bytes_ -= std::min(bytes_, size);
+    removed_video = removed_video || packets_.front().kind == StreamKind::kVideo;
     packets_.pop_front();
+  }
+  if (removed_video) RefreshVideoBoundsLocked();
+}
+
+void RollingMediaBuffer::RefreshVideoBoundsLocked() noexcept {
+  has_video_ = false;
+  for (const auto& packet : packets_) {
+    if (packet.kind != StreamKind::kVideo || !packet.packet) continue;
+    first_video_pts_100ns_ = DescribePacket(packet).pts_100ns;
+    has_video_ = true;
+    break;
+  }
+  if (!has_video_) {
+    first_video_pts_100ns_ = 0;
+    last_video_pts_100ns_ = 0;
   }
 }
 

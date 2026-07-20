@@ -120,6 +120,7 @@ class GraphicsCapture {
   std::atomic<std::uint64_t> fence_counter_{0};
   std::atomic<std::uint64_t> captured_frames_{0};
   std::atomic<std::uint64_t> encoded_frames_{0};
+  std::atomic<std::uint64_t> coalesced_raw_frames_{0};
   std::int64_t qpc_origin_ = 0;
   std::int64_t qpc_frequency_ = 0;
 

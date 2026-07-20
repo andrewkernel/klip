@@ -112,13 +112,17 @@ int KlipApplication::Run() {
   if (!initialized_.load(std::memory_order_acquire)) return 1;
   const auto commands = BuildUiCommands();
   auto next_hotkey_retry = std::chrono::steady_clock::now();
+  auto next_metrics_update = std::chrono::steady_clock::now();
   while (window_.PumpMessages()) {
     const auto ui_deadline =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(33);
-    UpdateRollingMetrics();
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= next_metrics_update) {
+      UpdateRollingMetrics();
+      next_metrics_update = now + std::chrono::milliseconds(250);
+    }
     bool hotkeys_available = hotkeys_.SaveRegistered() && hotkeys_.RecordRegistered() &&
                              hotkeys_.ToggleRegistered();
-    const auto now = std::chrono::steady_clock::now();
     if (!hotkeys_available && now >= next_hotkey_retry) {
       Error hotkey_error;
       hotkeys_available = hotkeys_.Register(window_.Handle(), config_.hotkeys, hotkey_error);

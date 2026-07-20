@@ -150,6 +150,7 @@ void RecordingWriter::Worker(std::shared_ptr<PacketQueue> queue,
                              std::filesystem::path output_path, CodecSnapshot video,
                              CodecSnapshot audio, bool has_audio) noexcept {
   try {
+    SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
     Mp4Muxer muxer;
     Error error;
     if (!muxer.Open(output_path, video, has_audio ? &audio : nullptr,

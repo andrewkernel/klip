@@ -3,6 +3,7 @@
 #include <d3d11.h>
 #include <winrt/base.h>
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <mutex>
@@ -38,6 +39,7 @@ class VideoEncoder {
   void Shutdown() noexcept;
   void Flush() noexcept;
   void RestartTimeline() noexcept;
+  bool Prepare(std::uint32_t width, std::uint32_t height, Error& error);
   bool Encode(ID3D11Texture2D* texture, std::uint32_t width, std::uint32_t height,
               std::int64_t pts_100ns, TextureRecycler recycler, Error& error);
   [[nodiscard]] bool SnapshotCodec(CodecSnapshot& snapshot) const;
@@ -74,6 +76,10 @@ class VideoEncoder {
   bool force_keyframe_ = true;
   bool logged_first_packet_ = false;
   bool logged_first_keyframe_ = false;
+  std::chrono::steady_clock::time_point next_open_attempt_{};
+  std::uint32_t failed_width_ = 0;
+  std::uint32_t failed_height_ = 0;
+  Error last_open_error_{};
   mutable std::mutex mutex_;
 };
 

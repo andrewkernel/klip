@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <mutex>
 #include <vector>
@@ -29,12 +30,16 @@ class RollingMediaBuffer {
 
  private:
   void EvictLocked();
+  void RefreshVideoBoundsLocked() noexcept;
 
   const double maximum_seconds_;
   const std::size_t maximum_bytes_;
   mutable std::mutex mutex_;
   std::deque<EncodedPacket> packets_;
   std::size_t bytes_ = 0;
+  std::int64_t first_video_pts_100ns_ = 0;
+  std::int64_t last_video_pts_100ns_ = 0;
+  bool has_video_ = false;
 };
 
 }  // namespace klip

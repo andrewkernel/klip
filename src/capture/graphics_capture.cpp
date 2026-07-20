@@ -605,6 +605,20 @@ void GraphicsCapture::ProcessingLoop(std::stop_token stop_token) noexcept {
     while (!stop_token.stop_requested() && running_.load(std::memory_order_acquire)) {
       RawFrame raw;
       if (!raw_queue_->WaitPop(raw, stop_token)) break;
+      // When conversion falls behind, process the newest captured frame and release
+      // stale queued frames. Catching up by converting old frames only adds GPU load
+      // and makes the replay lag farther behind the game.
+      RawFrame newer;
+      while (raw_queue_->TryPop(newer)) {
+        if (raw.frame != nullptr) {
+          try {
+            raw.frame.Close();
+          } catch (...) {
+          }
+        }
+        raw = std::move(newer);
+        coalesced_raw_frames_.fetch_add(1, std::memory_order_relaxed);
+      }
       if (raw.generation != capture_generation_.load(std::memory_order_acquire)) continue;
       ConvertedFrame converted;
       Error error;
@@ -641,6 +655,7 @@ void GraphicsCapture::EncodingLoop(std::stop_token stop_token) noexcept {
     const auto frame_interval = std::chrono::nanoseconds(
         1'000'000'000LL / static_cast<std::int64_t>(config_.target_fps));
     auto next_frame = std::chrono::steady_clock::now();
+    auto next_encode_error_report = std::chrono::steady_clock::time_point{};
     const auto recycle_latest = [&] {
       if (latest)
         RecycleNv12Texture(latest.detach(), latest_width, latest_height);
@@ -687,6 +702,17 @@ void GraphicsCapture::EncodingLoop(std::stop_token stop_token) noexcept {
         continue;
       }
 
+      Error error;
+      if (!encoder_.Prepare(latest_width, latest_height, error)) {
+        if (now >= next_encode_error_report) {
+          state_.SetError(error);
+          logger_.ErrorMessage(error);
+          next_encode_error_report = now + std::chrono::seconds(5);
+        }
+        next_frame = now + std::chrono::milliseconds(100);
+        continue;
+      }
+
       auto frame = AcquireNv12Texture(latest_width, latest_height);
       if (!frame) {
         Error error{ErrorComponent::kCapture, "allocate repeated NV12 frame",
@@ -717,16 +743,19 @@ void GraphicsCapture::EncodingLoop(std::stop_token stop_token) noexcept {
       }
 
       const auto started = std::chrono::steady_clock::now();
-      Error error;
       auto recycler = [this](ID3D11Texture2D* texture, std::uint32_t width, std::uint32_t height) {
         RecycleNv12Texture(texture, width, height);
       };
       if (!encoder_.Encode(frame.get(), latest_width, latest_height, Timestamp100ns(),
                            std::move(recycler), error)) {
-        state_.SetError(error);
-        logger_.ErrorMessage(error);
+        if (now >= next_encode_error_report) {
+          state_.SetError(error);
+          logger_.ErrorMessage(error);
+          next_encode_error_report = now + std::chrono::seconds(5);
+        }
       } else {
         encoded_frames_.fetch_add(1, std::memory_order_relaxed);
+        next_encode_error_report = {};
       }
       const auto latency =
           std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
@@ -746,8 +775,9 @@ void GraphicsCapture::EncodingLoop(std::stop_token stop_token) noexcept {
 
 void GraphicsCapture::TargetLoop(std::stop_token stop_token) noexcept {
   try {
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
     while (!stop_token.stop_requested() && running_.load(std::memory_order_acquire)) {
-      if (std::chrono::steady_clock::now() - last_source_refresh_ >= std::chrono::seconds(2))
+      if (std::chrono::steady_clock::now() - last_source_refresh_ >= std::chrono::seconds(5))
         RefreshSourceOptions();
       const auto target = DetermineTarget();
       const bool dirty = target_dirty_.exchange(false, std::memory_order_acq_rel);
@@ -796,18 +826,27 @@ std::int64_t GraphicsCapture::Timestamp100ns() const noexcept {
 void GraphicsCapture::PublishMetrics(double encode_latency_ms) {
   static thread_local auto last_time = std::chrono::steady_clock::now();
   static thread_local std::uint64_t last_frames = 0;
-  double fps = state_.Snapshot().metrics.capture_fps;
+  static thread_local double latency_total_ms = 0.0;
+  static thread_local std::uint64_t latency_samples = 0;
+  latency_total_ms += encode_latency_ms;
+  ++latency_samples;
   const auto now = std::chrono::steady_clock::now();
   const auto elapsed = std::chrono::duration<double>(now - last_time).count();
+  if (elapsed < 0.5) return;
   const auto frames = encoded_frames_.load(std::memory_order_relaxed);
-  if (elapsed >= 1.0) {
-    fps = static_cast<double>(frames - last_frames) / elapsed;
-    last_time = now;
-    last_frames = frames;
-  }
+  const auto fps = static_cast<double>(frames - last_frames) / elapsed;
+  const auto average_latency = latency_samples == 0
+                                   ? 0.0
+                                   : latency_total_ms / static_cast<double>(latency_samples);
+  last_time = now;
+  last_frames = frames;
+  latency_total_ms = 0.0;
+  latency_samples = 0;
   state_.SetCaptureMetrics(fps, captured_frames_.load(std::memory_order_relaxed),
-                           raw_queue_->Dropped(), encode_queue_->Dropped(),
-                           raw_queue_->Size(), encode_queue_->Size(), encode_latency_ms);
+                           raw_queue_->Dropped() +
+                               coalesced_raw_frames_.load(std::memory_order_relaxed),
+                           encode_queue_->Dropped(),
+                           raw_queue_->Size(), encode_queue_->Size(), average_latency);
 }
 
 winrt::Windows::Graphics::Capture::GraphicsCaptureItem GraphicsCapture::CreateForWindow(
