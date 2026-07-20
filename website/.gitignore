@@ -40,3 +40,7 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+.git-local-history-*
+.vite/
+pnpm-lock.yaml
+pnpm-workspace.yaml

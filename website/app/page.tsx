@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 
-const INSTALLER_URL = "/Klip-0.3.0-win64-setup.exe";
-const PORTABLE_URL = "/Klip-0.3.0-win64-portable.zip";
+const INSTALLER_URL = "/api/download?artifact=installer";
+const PORTABLE_URL = "/api/download?artifact=portable";
 
 const navigation = [
   { id: "features", label: "features" },
