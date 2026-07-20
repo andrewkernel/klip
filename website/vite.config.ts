@@ -1,5 +1,6 @@
 import vinext from "vinext";
 import { defineConfig } from "vite";
+import { nitro } from "nitro/vite";
 import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
 
@@ -40,8 +41,12 @@ export default defineConfig(async () => {
   process.env.WRANGLER_LOG_PATH ??= ".wrangler/logs";
   process.env.MINIFLARE_REGISTRY_PATH ??= ".wrangler/registry";
 
-  // Wrangler snapshots its log path while the Cloudflare plugin is imported.
-  const { cloudflare } = await import("@cloudflare/vite-plugin");
+  // Vercel needs Nitro's Vercel preset to expose the Vinext server output as
+  // functions. Cloudflare remains the native target for local/Sites builds.
+  const isVercel = Boolean(process.env.VERCEL);
+  const cloudflare = isVercel
+    ? undefined
+    : (await import("@cloudflare/vite-plugin")).cloudflare;
 
   return {
     server: isCodexSeatbeltSandbox
@@ -50,10 +55,17 @@ export default defineConfig(async () => {
     plugins: [
       vinext(),
       sites(),
-      cloudflare({
-        viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
-        config: localBindingConfig,
-      }),
+      ...(isVercel
+        ? [nitro({ preset: "vercel" })]
+        : [
+            cloudflare!({
+              viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
+              config: localBindingConfig,
+            }),
+          ]),
     ],
+    build: isVercel
+      ? { rollupOptions: { external: ["cloudflare:workers"] } }
+      : undefined,
   };
 });
