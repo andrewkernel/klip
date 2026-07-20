@@ -41,6 +41,7 @@ class GraphicsCapture {
   void Stop() noexcept;
   void SetTargetMode(CaptureTargetMode mode);
   void SelectTarget(CaptureTargetMode mode, std::uint64_t source_id);
+  void SetBorderRequired(bool required);
   [[nodiscard]] int64_t QpcOrigin() const noexcept { return qpc_origin_; }
   [[nodiscard]] int64_t QpcFrequency() const noexcept { return qpc_frequency_; }
 

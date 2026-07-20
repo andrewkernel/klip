@@ -224,6 +224,12 @@ UiCommands KlipApplication::BuildUiCommands() {
             capture_.SelectTarget(mode, id);
             PersistSettings(config_, false);
           },
+      .set_capture_border =
+          [this](bool required) {
+            config_.capture_border = required;
+            capture_.SetBorderRequired(required);
+            PersistSettings(config_, false);
+          },
       .set_microphone_enabled =
           [this](bool enabled) {
             config_.microphone_enabled = enabled;

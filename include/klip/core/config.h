@@ -42,6 +42,7 @@ struct AppConfig {
   std::filesystem::path log_path = "klip.log";
   bool microphone_enabled = false;
   bool capture_cursor = true;
+  bool capture_border = true;
   std::size_t raw_frame_queue_capacity = 4;
   std::size_t encode_queue_capacity = 4;
   std::size_t clip_request_queue_capacity = 8;

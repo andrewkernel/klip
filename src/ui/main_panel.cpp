@@ -458,6 +458,14 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
                 kDivider, 1.0F);
   DrawText(draw, label_font, 11.0F, {content.x, section_line_y + 25.0F}, kMutedU32,
            "capture source / choose one");
+  bool show_capture_highlight = config.capture_border;
+  ImGui::SetCursorScreenPos({content.x + content_width - 224.0F, section_line_y + 17.0F});
+  if (ImGui::Checkbox("show capture highlight", &show_capture_highlight) &&
+      commands.set_capture_border) {
+    commands.set_capture_border(show_capture_highlight);
+  }
+  if (ImGui::IsItemHovered())
+    ImGui::SetTooltip("Keeps the Windows selection border visible. Turning this off does not stop capture.");
 
   const bool source_disabled = snapshot.recording || snapshot.finalizing_recording ||
                                snapshot.status == CaptureStatus::kSaving;
@@ -825,6 +833,7 @@ void MainPanel::RenderSettings(const ApplicationSnapshot& snapshot, const AppCon
   if (ImGui::Combo("encoder load", &quality, qualities, IM_ARRAYSIZE(qualities)))
     draft_.encoder_quality = static_cast<EncoderQuality>(quality);
   ImGui::Checkbox("capture mouse cursor", &draft_.capture_cursor);
+  ImGui::Checkbox("show Windows capture highlight", &draft_.capture_border);
 
   SectionLabel("clips / audio");
   int clip_seconds = static_cast<int>(draft_.clip_duration_seconds);

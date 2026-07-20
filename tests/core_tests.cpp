@@ -75,6 +75,7 @@ void TestConfigRoundTrip() {
   saved.target_mode = klip::CaptureTargetMode::kDisplay;
   saved.encoder_quality = klip::EncoderQuality::kPerformance;
   saved.capture_cursor = false;
+  saved.capture_border = false;
   saved.encoder_preferences = {"h264_mf"};
   saved.output_directory = "C:/Videos/Klip Clips";
   saved.preferred_display_name = "Display 1";
@@ -95,6 +96,7 @@ void TestConfigRoundTrip() {
   CHECK(loaded.target_mode == klip::CaptureTargetMode::kDisplay);
   CHECK(loaded.encoder_quality == klip::EncoderQuality::kPerformance);
   CHECK(!loaded.capture_cursor);
+  CHECK(!loaded.capture_border);
   CHECK(loaded.encoder_preferences == std::vector<std::string>{"h264_mf"});
   CHECK(loaded.output_directory == std::filesystem::path("C:/Videos/Klip Clips"));
   CHECK(loaded.preferred_display_name == "Display 1");
