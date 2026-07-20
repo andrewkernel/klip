@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <optional>
 #include <string_view>
 
 namespace klip {
@@ -307,6 +308,80 @@ void ResizeReplayBudget(AppConfig& config) {
       std::max<std::size_t>(minimum, static_cast<std::size_t>(required));
 }
 
+void ApplyPerformanceMode(AppConfig& config, bool enabled) {
+  config.target_fps = 60;
+  config.output_width = enabled ? 1280U : 1920U;
+  config.output_height = enabled ? 720U : 1080U;
+  config.video_bitrate = enabled ? 8'000'000 : 12'000'000;
+  config.encoder_quality = enabled ? EncoderQuality::kPerformance : EncoderQuality::kBalanced;
+  SetEncoderProfile(config, 0);
+  ResizeReplayBudget(config);
+}
+
+bool IsPerformanceMode(const AppConfig& config) {
+  return config.target_fps == 60 && config.output_width == 1280 &&
+         config.output_height == 720 && config.video_bitrate == 8'000'000 &&
+         config.encoder_quality == EncoderQuality::kPerformance &&
+         EncoderProfile(config.encoder_preferences) == 0;
+}
+
+std::optional<unsigned int> VirtualKeyForImGuiKey(ImGuiKey key) {
+  if (key >= ImGuiKey_A && key <= ImGuiKey_Z)
+    return static_cast<unsigned int>('A' + (key - ImGuiKey_A));
+  if (key >= ImGuiKey_0 && key <= ImGuiKey_9)
+    return static_cast<unsigned int>('0' + (key - ImGuiKey_0));
+  if (key >= ImGuiKey_F1 && key <= ImGuiKey_F24)
+    return static_cast<unsigned int>(0x70 + (key - ImGuiKey_F1));
+  if (key >= ImGuiKey_Keypad0 && key <= ImGuiKey_Keypad9)
+    return static_cast<unsigned int>(0x60 + (key - ImGuiKey_Keypad0));
+  switch (key) {
+    case ImGuiKey_Tab: return 0x09;
+    case ImGuiKey_LeftArrow: return 0x25;
+    case ImGuiKey_RightArrow: return 0x27;
+    case ImGuiKey_UpArrow: return 0x26;
+    case ImGuiKey_DownArrow: return 0x28;
+    case ImGuiKey_PageUp: return 0x21;
+    case ImGuiKey_PageDown: return 0x22;
+    case ImGuiKey_Home: return 0x24;
+    case ImGuiKey_End: return 0x23;
+    case ImGuiKey_Insert: return 0x2D;
+    case ImGuiKey_Delete: return 0x2E;
+    case ImGuiKey_Backspace: return 0x08;
+    case ImGuiKey_Space: return 0x20;
+    case ImGuiKey_Enter: return 0x0D;
+    case ImGuiKey_CapsLock: return 0x14;
+    case ImGuiKey_ScrollLock: return 0x91;
+    case ImGuiKey_NumLock: return 0x90;
+    case ImGuiKey_PrintScreen: return 0x2C;
+    case ImGuiKey_Pause: return 0x13;
+    case ImGuiKey_KeypadDecimal: return 0x6E;
+    case ImGuiKey_KeypadDivide: return 0x6F;
+    case ImGuiKey_KeypadMultiply: return 0x6A;
+    case ImGuiKey_KeypadSubtract: return 0x6D;
+    case ImGuiKey_KeypadAdd: return 0x6B;
+    case ImGuiKey_KeypadEnter: return 0x0D;
+    case ImGuiKey_Apostrophe: return 0xDE;
+    case ImGuiKey_Comma: return 0xBC;
+    case ImGuiKey_Minus: return 0xBD;
+    case ImGuiKey_Period: return 0xBE;
+    case ImGuiKey_Slash: return 0xBF;
+    case ImGuiKey_Semicolon: return 0xBA;
+    case ImGuiKey_Equal: return 0xBB;
+    case ImGuiKey_LeftBracket: return 0xDB;
+    case ImGuiKey_Backslash: return 0xDC;
+    case ImGuiKey_RightBracket: return 0xDD;
+    case ImGuiKey_GraveAccent: return 0xC0;
+    default: return std::nullopt;
+  }
+}
+
+bool SameChord(unsigned int modifiers_a, unsigned int key_a, unsigned int modifiers_b,
+               unsigned int key_b) {
+  constexpr unsigned int chord_mask = HotkeyConfig::kAlt | HotkeyConfig::kControl |
+                                      HotkeyConfig::kShift | HotkeyConfig::kWindows;
+  return (modifiers_a & chord_mask) == (modifiers_b & chord_mask) && key_a == key_b;
+}
+
 }  // namespace
 
 void MainPanel::Render(const ApplicationSnapshot& snapshot, const AppConfig& config,
@@ -409,11 +484,15 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
                can_save ? kTextU32 : kMutedU32);
   DrawText(draw, semibold, 17.0F, {save_pos.x + 75.0F, save_pos.y + 36.0F},
            can_save ? kTextU32 : kMutedU32, save_label);
-  const ImVec2 save_pill{save_pos.x + action_size.x - 86.0F, save_pos.y + 32.0F};
-  draw->AddRectFilled(save_pill, {save_pill.x + 68.0F, save_pill.y + 31.0F},
+  const auto save_hotkey = FormatHotkey(config.hotkeys.save_modifiers,
+                                         config.hotkeys.save_virtual_key);
+  const float save_pill_width = TextWidth(label_font, 11.0F, save_hotkey) + 22.0F;
+  const ImVec2 save_pill{save_pos.x + action_size.x - save_pill_width - 18.0F,
+                         save_pos.y + 32.0F};
+  draw->AddRectFilled(save_pill, {save_pill.x + save_pill_width, save_pill.y + 31.0F},
                       IM_COL32(255, 255, 255, 15), 7.0F);
   DrawText(draw, label_font, 11.0F, {save_pill.x + 11.0F, save_pill.y + 9.0F},
-           can_save ? IM_COL32(224, 213, 247, 255) : kMutedU32, "alt + c");
+           can_save ? IM_COL32(224, 213, 247, 255) : kMutedU32, save_hotkey);
   if (save_clicked && can_save && commands.save_clip) commands.save_clip();
 
   const bool record_disabled =
@@ -434,11 +513,16 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
   const char* record_label = snapshot.recording ? "stop recording" : "start recording";
   DrawText(draw, semibold, 17.0F, {record_pos.x + 75.0F, record_pos.y + 36.0F},
            record_disabled ? kMutedU32 : kTextU32, record_label);
-  const ImVec2 record_pill{record_pos.x + action_size.x - 86.0F, record_pos.y + 32.0F};
-  draw->AddRectFilled(record_pill, {record_pill.x + 68.0F, record_pill.y + 31.0F},
+  const auto record_hotkey = FormatHotkey(config.hotkeys.record_modifiers,
+                                           config.hotkeys.record_virtual_key);
+  const float record_pill_width = TextWidth(label_font, 11.0F, record_hotkey) + 22.0F;
+  const ImVec2 record_pill{record_pos.x + action_size.x - record_pill_width - 18.0F,
+                           record_pos.y + 32.0F};
+  draw->AddRectFilled(record_pill,
+                      {record_pill.x + record_pill_width, record_pill.y + 31.0F},
                       IM_COL32(255, 255, 255, 10), 7.0F);
   DrawText(draw, label_font, 11.0F, {record_pill.x + 11.0F, record_pill.y + 9.0F}, kMutedU32,
-           "alt + r");
+           record_hotkey);
   if (record_clicked && !record_disabled && commands.toggle_recording)
     commands.toggle_recording();
   if (snapshot.recording) {
@@ -744,9 +828,17 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
            kPurpleBright, "open clips folder");
   if (folder_clicked && commands.open_output_folder) commands.open_output_folder();
 
-  const char* hotkey_copy = hotkeys_available
-                                ? "alt + r  record   /   alt + c  clip   /   alt + x  hide"
-                                : "global hotkeys unavailable";
+  const auto hotkey_copy = hotkeys_available
+                               ? FormatHotkey(config.hotkeys.record_modifiers,
+                                              config.hotkeys.record_virtual_key) +
+                                     " record   /   " +
+                                     FormatHotkey(config.hotkeys.save_modifiers,
+                                                  config.hotkeys.save_virtual_key) +
+                                     " clip   /   " +
+                                     FormatHotkey(config.hotkeys.toggle_ui_modifiers,
+                                                  config.hotkeys.toggle_ui_virtual_key) +
+                                     " hide"
+                               : std::string("global hotkeys unavailable");
   const float hotkey_width = TextWidth(label_font, 10.0F, hotkey_copy);
   DrawText(draw, label_font, 10.0F,
            {content.x + content_width - hotkey_width, metric_y + 60.0F}, kMutedU32,
@@ -788,7 +880,7 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
     ResetDraft(config);
     settings_open_ = true;
   }
-  constexpr std::string_view version = "v0.3.0";
+  constexpr std::string_view version = "v3.0.1";
   DrawText(draw, label_font, 10.0F,
            {content.x + content_width - TextWidth(label_font, 10.0F, version), footer_y + 21.0F},
            kMutedU32, version);
@@ -803,7 +895,16 @@ void MainPanel::RenderSettings(const ApplicationSnapshot& snapshot, const AppCon
   ImGui::SameLine(ImGui::GetWindowWidth() - 72.0F);
   if (ImGui::SmallButton("back")) settings_open_ = false;
   ImGui::TextColored(kMuted,
-                     "hardware-first defaults keep capture light. saved changes apply on restart.");
+                     "hardware-first defaults keep capture light. shortcuts apply immediately.");
+
+  SectionLabel("performance / preset");
+  bool performance_mode = IsPerformanceMode(draft_);
+  if (ImGui::Checkbox("performance mode", &performance_mode))
+    ApplyPerformanceMode(draft_, performance_mode);
+  ImGui::TextColored(kMuted,
+                     performance_mode
+                         ? "active / 720p60, 8 Mbps, fastest hardware preset, automatic GPU"
+                         : "off / recommended quality uses 1080p60, 12 Mbps, balanced hardware");
 
   SectionLabel("video / quality");
   int fps = draft_.target_fps == 30 ? 0 : 1;
@@ -855,6 +956,77 @@ void MainPanel::RenderSettings(const ApplicationSnapshot& snapshot, const AppCon
   ImGui::Checkbox("enable microphone (voice / keyboard clicks) on launch",
                   &draft_.microphone_enabled);
 
+  SectionLabel("shortcuts / global keybinds");
+  ImGui::TextColored(kMuted,
+                     "click a shortcut, then press Ctrl, Alt, Shift, or Win plus another key.");
+  const char* shortcut_labels[] = {"save replay", "start / stop recording", "show / hide Klip"};
+  unsigned int* shortcut_modifiers[] = {&draft_.hotkeys.save_modifiers,
+                                        &draft_.hotkeys.record_modifiers,
+                                        &draft_.hotkeys.toggle_ui_modifiers};
+  unsigned int* shortcut_keys[] = {&draft_.hotkeys.save_virtual_key,
+                                   &draft_.hotkeys.record_virtual_key,
+                                   &draft_.hotkeys.toggle_ui_virtual_key};
+  for (int index = 0; index < 3; ++index) {
+    ImGui::PushID(index);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(shortcut_labels[index]);
+    ImGui::SameLine(220.0F);
+    const auto label = hotkey_capture_target_ == index
+                           ? std::string("press shortcut...  (esc cancels)")
+                           : FormatHotkey(*shortcut_modifiers[index], *shortcut_keys[index]);
+    if (ImGui::Button(label.c_str(), {300.0F, 0.0F})) {
+      hotkey_capture_target_ = index;
+      hotkey_capture_message_.clear();
+    }
+    ImGui::PopID();
+  }
+
+  if (hotkey_capture_target_ >= 0 && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+    hotkey_capture_target_ = -1;
+    hotkey_capture_message_ = "shortcut change cancelled";
+  } else if (hotkey_capture_target_ >= 0) {
+    for (int key_value = ImGuiKey_NamedKey_BEGIN; key_value < ImGuiKey_NamedKey_END;
+         ++key_value) {
+      const auto key = static_cast<ImGuiKey>(key_value);
+      if (!ImGui::IsKeyPressed(key, false)) continue;
+      const auto virtual_key = VirtualKeyForImGuiKey(key);
+      if (!virtual_key.has_value()) continue;
+      const auto& io = ImGui::GetIO();
+      unsigned int modifiers = HotkeyConfig::kNoRepeat;
+      if (io.KeyCtrl) modifiers |= HotkeyConfig::kControl;
+      if (io.KeyAlt) modifiers |= HotkeyConfig::kAlt;
+      if (io.KeyShift) modifiers |= HotkeyConfig::kShift;
+      if (io.KeySuper) modifiers |= HotkeyConfig::kWindows;
+      constexpr unsigned int chord_mask = HotkeyConfig::kControl | HotkeyConfig::kAlt |
+                                          HotkeyConfig::kShift | HotkeyConfig::kWindows;
+      if ((modifiers & chord_mask) == 0) {
+        hotkey_capture_message_ = "add Ctrl, Alt, Shift, or Win to that key";
+        break;
+      }
+      bool duplicate = false;
+      for (int other = 0; other < 3; ++other) {
+        if (other != hotkey_capture_target_ &&
+            SameChord(modifiers, *virtual_key, *shortcut_modifiers[other],
+                      *shortcut_keys[other])) {
+          duplicate = true;
+          break;
+        }
+      }
+      if (duplicate) {
+        hotkey_capture_message_ = "that shortcut is already assigned";
+        break;
+      }
+      *shortcut_modifiers[hotkey_capture_target_] = modifiers;
+      *shortcut_keys[hotkey_capture_target_] = *virtual_key;
+      hotkey_capture_message_ = "shortcut ready / save settings to apply";
+      hotkey_capture_target_ = -1;
+      break;
+    }
+  }
+  if (!hotkey_capture_message_.empty())
+    ImGui::TextColored(hotkey_capture_target_ >= 0 ? kCoral : kMint, "%s",
+                       hotkey_capture_message_.c_str());
+
   SectionLabel("storage / local files");
   ImGui::InputText("clips folder", clips_path_.data(), clips_path_.size());
   ImGui::InputText("recordings folder", recordings_path_.data(), recordings_path_.size());
@@ -867,6 +1039,7 @@ void MainPanel::RenderSettings(const ApplicationSnapshot& snapshot, const AppCon
     draft_.output_directory = ParsePath(clips_path_.data());
     draft_.recording_directory = ParsePath(recordings_path_.data());
     commands.save_settings(draft_);
+    hotkey_capture_message_.clear();
   }
   if (!snapshot.settings_message.empty())
     ImGui::TextColored(snapshot.settings_restart_required ? ImVec4{1.0F, 0.73F, 0.25F, 1.0F}
@@ -883,6 +1056,8 @@ void MainPanel::ResetDraft(const AppConfig& config) {
   std::snprintf(clips_path_.data(), clips_path_.size(), "%s", clips.c_str());
   std::snprintf(recordings_path_.data(), recordings_path_.size(), "%s", recordings.c_str());
   draft_initialized_ = true;
+  hotkey_capture_target_ = -1;
+  hotkey_capture_message_.clear();
 }
 
 }  // namespace klip

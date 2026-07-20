@@ -41,6 +41,7 @@ class KlipApplication {
   UiCommands BuildUiCommands();
   void UpdateRollingMetrics();
   bool PersistSettings(const AppConfig& config, bool restart_required);
+  bool ApplySettings(const AppConfig& config);
 
   AppConfig config_;
   std::filesystem::path settings_path_;

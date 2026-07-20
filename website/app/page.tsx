@@ -13,8 +13,8 @@ const navigation = [
 ];
 
 const featureHighlights = [
-  ["01", "instant replay", "save the last 15–300 seconds with Alt + C"],
-  ["02", "full recording", "record complete sessions with Alt + R"],
+  ["01", "instant replay", "save the last 15–300 seconds with your own shortcut"],
+  ["02", "full recording", "record complete sessions with a global keybind"],
   ["03", "audio control", "balance desktop and microphone levels before capture"],
   ["04", "hardware encode", "capture at up to 60 fps with NVIDIA, AMD, or Intel"],
 ];
@@ -129,7 +129,7 @@ export default function Home() {
             <p className="hero-copy">Capture the moment before you miss it.</p>
             <a className="button button--primary hero-button" href={INSTALLER_URL}>
               <span className="download-icon" aria-hidden="true">↓</span>
-              download Klip <strong>v0.3.0</strong>
+              download Klip <strong>v3.0.1</strong>
             </a>
             <div className="hero-meta" aria-label="Product highlights">
               <span>Windows 10 &amp; 11</span>
@@ -169,7 +169,7 @@ export default function Home() {
             <figure className="product-window reveal">
               <div className="product-window-bar">
                 <span><i /> Klip / dashboard</span>
-                <span>v0.3.0</span>
+                <span>v3.0.1</span>
               </div>
               <img src="/klip-dashboard.png" alt="Klip dashboard showing replay, recording, capture source, and audio controls" />
               <figcaption>
@@ -215,7 +215,7 @@ export default function Home() {
         <section className="section download-section post-features-section" id="download">
           <div className="editorial-meta reveal" aria-hidden="true">
             <span>download / windows</span>
-            <span>[ current: v0.3.0 ]</span>
+            <span>[ current: v3.0.1 ]</span>
           </div>
 
           <div className="download-panel reveal">
@@ -237,7 +237,7 @@ export default function Home() {
               <span>Windows 10 1903+</span>
               <span>Windows 11</span>
               <span>x64</span>
-              <span>8.1 MB</span>
+              <span>9.3 MB</span>
             </div>
 
             <div className="unsigned-note">
@@ -264,20 +264,20 @@ export default function Home() {
             <article className="release-card reveal">
               <div className="release-card-header">
                 <div>
-                  <span className="release-version">v0.3.0</span>
-                  <h3>first public Windows release</h3>
+                  <span className="release-version">v3.0.1</span>
+                  <h3>custom controls + performance mode</h3>
                 </div>
-                <time dateTime="2026-07-19">july 19, 2026</time>
+                <time dateTime="2026-07-20">july 20, 2026</time>
               </div>
               <ul>
-                <li><span>01 / new</span><p>rolling replay clips and full-session MP4 recording</p></li>
-                <li><span>02 / new</span><p>game, window, and full-display capture</p></li>
-                <li><span>03 / new</span><p>desktop and microphone volume controls</p></li>
-                <li><span>04 / new</span><p>NVIDIA, AMD, and Intel-friendly hardware encoding</p></li>
-                <li><span>05 / polish</span><p>refined dashboard, native title bar, and Klip taskbar icon</p></li>
-                <li><span>06 / privacy</span><p>local-only recording with no account or telemetry</p></li>
+                <li><span>01 / new</span><p>custom global shortcuts for replay, recording, and show / hide</p></li>
+                <li><span>02 / new</span><p>one-click 720p60 performance mode for lighter capture</p></li>
+                <li><span>03 / fix</span><p>conflict-safe keybind registration with automatic rollback</p></li>
+                <li><span>04 / fix</span><p>keyframe-safe clips and dependable MP4 finalization</p></li>
+                <li><span>05 / polish</span><p>shortcut labels stay consistent across settings and dashboard</p></li>
+                <li><span>06 / quality</span><p>warning-clean Windows build and persisted settings migration</p></li>
               </ul>
-              <a href={INSTALLER_URL}>download v0.3.0 <span aria-hidden="true">↓</span></a>
+              <a href={INSTALLER_URL}>download v3.0.1 <span aria-hidden="true">↓</span></a>
             </article>
           </div>
         </section>

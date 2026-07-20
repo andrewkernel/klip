@@ -72,4 +72,11 @@ Verify on each supported GPU/vendor and intended Windows release:
 17. Confirm Explorer, the title bar, taskbar, Start menu shortcut, installer, and uninstaller all show the Klip icon and the executable reports the expected product/file version.
 18. Run Application Verifier or an equivalent native diagnostic to check handles/heaps, and inspect the D3D debug layer where available.
 
+Release-candidate additions:
+
+- Rebind each action to a different Ctrl/Alt/Shift combination, save, and confirm the new
+  shortcuts work globally without a restart; confirm duplicate and unavailable chords are rejected.
+- Enable performance mode and confirm it applies 1280x720, 60 FPS, 8 Mbps, automatic encoder
+  selection, and the performance encoder preset, then restart and confirm the preset persists.
+
 Do not interpret passing core tests as validation of WGC, WASAPI, GPU drivers, FFmpeg hardware interoperability, or media quality.

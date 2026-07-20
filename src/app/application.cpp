@@ -23,6 +23,33 @@ std::string WideToUtf8(const std::wstring& value) {
   return output;
 }
 
+bool SameHotkeys(const HotkeyConfig& left, const HotkeyConfig& right) {
+  return left.save_modifiers == right.save_modifiers &&
+         left.save_virtual_key == right.save_virtual_key &&
+         left.record_modifiers == right.record_modifiers &&
+         left.record_virtual_key == right.record_virtual_key &&
+         left.toggle_ui_modifiers == right.toggle_ui_modifiers &&
+         left.toggle_ui_virtual_key == right.toggle_ui_virtual_key;
+}
+
+bool CaptureRestartRequired(const AppConfig& left, const AppConfig& right) {
+  return left.target_fps != right.target_fps || left.output_width != right.output_width ||
+         left.output_height != right.output_height ||
+         left.video_bitrate != right.video_bitrate || left.audio_bitrate != right.audio_bitrate ||
+         left.microphone_enabled != right.microphone_enabled ||
+         left.capture_cursor != right.capture_cursor || left.target_mode != right.target_mode ||
+         left.encoder_quality != right.encoder_quality ||
+         left.preferred_game_title != right.preferred_game_title ||
+         left.preferred_display_name != right.preferred_display_name ||
+         left.preferred_microphone_name != right.preferred_microphone_name ||
+         left.encoder_preferences != right.encoder_preferences ||
+         left.clip_duration_seconds != right.clip_duration_seconds ||
+         left.rolling_buffer_seconds != right.rolling_buffer_seconds ||
+         left.rolling_buffer_bytes != right.rolling_buffer_bytes ||
+         left.output_directory != right.output_directory ||
+         left.recording_directory != right.recording_directory;
+}
+
 }  // namespace
 
 KlipApplication::KlipApplication(AppConfig config, std::filesystem::path settings_path)
@@ -262,15 +289,43 @@ UiCommands KlipApplication::BuildUiCommands() {
           },
       .save_settings =
           [this](const AppConfig& updated) {
-            audio_.SetDesktopGain(static_cast<float>(updated.desktop_audio_gain));
-            audio_.SetMicrophoneGain(static_cast<float>(updated.microphone_audio_gain));
-            PersistSettings(updated, true);
+            ApplySettings(updated);
           },
       .open_output_folder =
           [this] {
             const auto folder = config_.output_directory.wstring();
             ShellExecuteW(nullptr, L"open", folder.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
           }};
+}
+
+bool KlipApplication::ApplySettings(const AppConfig& updated) {
+  const AppConfig previous = config_;
+  const bool hotkeys_changed = !SameHotkeys(previous.hotkeys, updated.hotkeys);
+  if (hotkeys_changed) {
+    Error hotkey_error;
+    if (!hotkeys_.Register(window_.Handle(), updated.hotkeys, hotkey_error)) {
+      Error restore_error;
+      hotkeys_.Register(window_.Handle(), previous.hotkeys, restore_error);
+      const auto message = "Shortcut unavailable. Choose a different combination.";
+      state_.SetError(hotkey_error);
+      state_.SetSettingsStatus(false, message);
+      logger_.Warning(hotkey_error.ToString());
+      return false;
+    }
+  }
+
+  const bool restart_required = CaptureRestartRequired(previous, updated);
+  if (!PersistSettings(updated, restart_required)) {
+    if (hotkeys_changed) {
+      Error restore_error;
+      hotkeys_.Register(window_.Handle(), previous.hotkeys, restore_error);
+    }
+    return false;
+  }
+  audio_.SetDesktopGain(static_cast<float>(updated.desktop_audio_gain));
+  audio_.SetMicrophoneGain(static_cast<float>(updated.microphone_audio_gain));
+  if (hotkeys_changed) logger_.Info("Global hotkeys updated");
+  return true;
 }
 
 bool KlipApplication::PersistSettings(const AppConfig& config, bool restart_required) {

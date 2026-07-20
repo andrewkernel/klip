@@ -46,6 +46,8 @@ class MainPanel {
   bool draft_initialized_ = false;
   bool desktop_gain_dirty_ = false;
   bool microphone_gain_dirty_ = false;
+  int hotkey_capture_target_ = -1;
+  std::string hotkey_capture_message_;
 };
 
 }  // namespace klip

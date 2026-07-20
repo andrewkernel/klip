@@ -46,6 +46,17 @@ void TestConfig() {
   invalid_gain.desktop_audio_gain = -0.01;
   invalid_gain.microphone_audio_gain = 2.01;
   CHECK(klip::ValidateConfig(invalid_gain).size() == 2);
+
+  klip::AppConfig invalid_hotkeys;
+  invalid_hotkeys.hotkeys.save_modifiers = klip::HotkeyConfig::kNoRepeat;
+  CHECK(!klip::ValidateConfig(invalid_hotkeys).empty());
+
+  klip::AppConfig duplicate_hotkeys;
+  duplicate_hotkeys.hotkeys.record_virtual_key = duplicate_hotkeys.hotkeys.save_virtual_key;
+  CHECK(!klip::ValidateConfig(duplicate_hotkeys).empty());
+
+  CHECK(klip::FormatHotkey(klip::HotkeyConfig::kControl | klip::HotkeyConfig::kShift,
+                           'K') == "ctrl + shift + k");
 }
 
 void TestAudioFrameCoverage() {
@@ -80,6 +91,16 @@ void TestConfigRoundTrip() {
   saved.output_directory = "C:/Videos/Klip Clips";
   saved.preferred_display_name = "Display 1";
   saved.preferred_microphone_name = "Studio Mic";
+  saved.hotkeys.save_modifiers =
+      klip::HotkeyConfig::kControl | klip::HotkeyConfig::kShift |
+      klip::HotkeyConfig::kNoRepeat;
+  saved.hotkeys.save_virtual_key = 'K';
+  saved.hotkeys.record_modifiers = klip::HotkeyConfig::kAlt | klip::HotkeyConfig::kNoRepeat;
+  saved.hotkeys.record_virtual_key = 0x75;
+  saved.hotkeys.toggle_ui_modifiers =
+      klip::HotkeyConfig::kControl | klip::HotkeyConfig::kAlt |
+      klip::HotkeyConfig::kNoRepeat;
+  saved.hotkeys.toggle_ui_virtual_key = 'H';
   std::string diagnostic;
   CHECK(klip::SaveConfig(path, saved, diagnostic));
 
@@ -101,6 +122,12 @@ void TestConfigRoundTrip() {
   CHECK(loaded.output_directory == std::filesystem::path("C:/Videos/Klip Clips"));
   CHECK(loaded.preferred_display_name == "Display 1");
   CHECK(loaded.preferred_microphone_name == "Studio Mic");
+  CHECK(loaded.hotkeys.save_modifiers == saved.hotkeys.save_modifiers);
+  CHECK(loaded.hotkeys.save_virtual_key == 'K');
+  CHECK(loaded.hotkeys.record_modifiers == saved.hotkeys.record_modifiers);
+  CHECK(loaded.hotkeys.record_virtual_key == 0x75);
+  CHECK(loaded.hotkeys.toggle_ui_modifiers == saved.hotkeys.toggle_ui_modifiers);
+  CHECK(loaded.hotkeys.toggle_ui_virtual_key == 'H');
   std::error_code ignored;
   std::filesystem::remove(path, ignored);
 }
@@ -110,11 +137,17 @@ void TestLegacyFrameRateMigration() {
   {
     std::ofstream output(path, std::ios::trunc);
     output << "target_fps=120\n";
+    output << "hotkey_modifiers="
+           << (klip::HotkeyConfig::kControl | klip::HotkeyConfig::kNoRepeat) << '\n';
   }
   klip::AppConfig loaded;
   std::string diagnostic;
   CHECK(klip::LoadConfig(path, loaded, diagnostic));
   CHECK(loaded.target_fps == 60);
+  CHECK(loaded.hotkeys.save_modifiers ==
+        (klip::HotkeyConfig::kControl | klip::HotkeyConfig::kNoRepeat));
+  CHECK(loaded.hotkeys.record_modifiers == loaded.hotkeys.save_modifiers);
+  CHECK(loaded.hotkeys.toggle_ui_modifiers == loaded.hotkeys.save_modifiers);
   std::error_code ignored;
   std::filesystem::remove(path, ignored);
 }

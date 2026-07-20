@@ -131,6 +131,26 @@ bool AssignValue(AppConfig& config, const std::string& key, const std::string& v
   if (key == "microphone_enabled") return ParseBool(value, config.microphone_enabled);
   if (key == "capture_cursor") return ParseBool(value, config.capture_cursor);
   if (key == "capture_border") return ParseBool(value, config.capture_border);
+  if (key == "hotkey_modifiers") {
+    unsigned int modifiers = 0;
+    if (!ParseInteger(value, modifiers)) return false;
+    config.hotkeys.save_modifiers = modifiers;
+    config.hotkeys.record_modifiers = modifiers;
+    config.hotkeys.toggle_ui_modifiers = modifiers;
+    return true;
+  }
+  if (key == "hotkey_save_modifiers")
+    return ParseInteger(value, config.hotkeys.save_modifiers);
+  if (key == "hotkey_record_modifiers")
+    return ParseInteger(value, config.hotkeys.record_modifiers);
+  if (key == "hotkey_toggle_ui_modifiers")
+    return ParseInteger(value, config.hotkeys.toggle_ui_modifiers);
+  if (key == "hotkey_save_virtual_key")
+    return ParseInteger(value, config.hotkeys.save_virtual_key);
+  if (key == "hotkey_record_virtual_key")
+    return ParseInteger(value, config.hotkeys.record_virtual_key);
+  if (key == "hotkey_toggle_ui_virtual_key")
+    return ParseInteger(value, config.hotkeys.toggle_ui_virtual_key);
   if (key == "output_directory") {
     config.output_directory = ParsePath(value);
     return true;
@@ -260,6 +280,12 @@ bool SaveConfig(const std::filesystem::path& path, const AppConfig& config,
   output << "microphone_enabled=" << (config.microphone_enabled ? "true" : "false") << '\n';
   output << "capture_cursor=" << (config.capture_cursor ? "true" : "false") << '\n';
   output << "capture_border=" << (config.capture_border ? "true" : "false") << '\n';
+  output << "hotkey_save_modifiers=" << config.hotkeys.save_modifiers << '\n';
+  output << "hotkey_record_modifiers=" << config.hotkeys.record_modifiers << '\n';
+  output << "hotkey_toggle_ui_modifiers=" << config.hotkeys.toggle_ui_modifiers << '\n';
+  output << "hotkey_save_virtual_key=" << config.hotkeys.save_virtual_key << '\n';
+  output << "hotkey_record_virtual_key=" << config.hotkeys.record_virtual_key << '\n';
+  output << "hotkey_toggle_ui_virtual_key=" << config.hotkeys.toggle_ui_virtual_key << '\n';
   output << "capture_mode=" << ModeName(config.target_mode) << '\n';
   output << "encoder_quality=" << QualityName(config.encoder_quality) << '\n';
   output << "encoder_preferences=" << JoinEncoders(config.encoder_preferences) << '\n';

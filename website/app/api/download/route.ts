@@ -3,8 +3,8 @@ import { getDb } from "../../../db";
 import { downloadCounts } from "../../../db/schema";
 
 const targets = {
-  installer: "/Klip-0.3.0-win64-setup.exe",
-  portable: "/Klip-0.3.0-win64-portable.zip",
+  installer: "/Klip-3.0.1-win64-setup.exe",
+  portable: "/Klip-3.0.1-win64-portable.zip",
 } as const;
 
 export async function GET(request: Request) {

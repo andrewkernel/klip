@@ -22,9 +22,17 @@ enum class EncoderQuality {
 };
 
 struct HotkeyConfig {
-  unsigned int modifiers = 0x0001 | 0x4000;  // MOD_ALT | MOD_NOREPEAT
+  static constexpr unsigned int kAlt = 0x0001;
+  static constexpr unsigned int kControl = 0x0002;
+  static constexpr unsigned int kShift = 0x0004;
+  static constexpr unsigned int kWindows = 0x0008;
+  static constexpr unsigned int kNoRepeat = 0x4000;
+
+  unsigned int save_modifiers = kAlt | kNoRepeat;
   unsigned int save_virtual_key = 'C';
+  unsigned int record_modifiers = kAlt | kNoRepeat;
   unsigned int record_virtual_key = 'R';
+  unsigned int toggle_ui_modifiers = kAlt | kNoRepeat;
   unsigned int toggle_ui_virtual_key = 'X';
 };
 
@@ -64,5 +72,6 @@ struct ValidationIssue {
 };
 
 std::vector<ValidationIssue> ValidateConfig(const AppConfig& config);
+std::string FormatHotkey(unsigned int modifiers, unsigned int virtual_key);
 
 }  // namespace klip

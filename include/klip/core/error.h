@@ -3,6 +3,7 @@
 #include <optional>
 #include <string>
 #include <system_error>
+#include <utility>
 
 namespace klip {
 
@@ -27,6 +28,17 @@ struct Error {
   std::optional<long long> native_code;
   std::string native_description;
   std::string context;
+
+  Error() = default;
+  Error(ErrorComponent component_value, std::string operation_value,
+        std::string message_value, std::optional<long long> native_code_value = {},
+        std::string native_description_value = {}, std::string context_value = {})
+      : component(component_value),
+        operation(std::move(operation_value)),
+        message(std::move(message_value)),
+        native_code(native_code_value),
+        native_description(std::move(native_description_value)),
+        context(std::move(context_value)) {}
 
   [[nodiscard]] std::string ToString() const;
 };

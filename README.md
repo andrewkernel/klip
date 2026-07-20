@@ -12,8 +12,9 @@ scene compositor, browser source, or plugin host competing for system resources.
 - Mixes Windows desktop audio with an optional, selectable microphone.
 - Uses GPU H.264 encoding through NVIDIA NVENC, AMD AMF, or Windows Media Foundation
   hardware encoding (the Intel-friendly fallback).
-- Exposes frame rate, resolution, bitrate, encoder, load preset, replay length, audio
-  bitrate, cursor capture, microphone, and storage settings in the app.
+- Exposes frame rate, resolution, bitrate, encoder, load preset, replay length, audio,
+  cursor capture, microphone, storage, and every global shortcut in the app.
+- Provides one-click performance mode for a hardware-first 720p60, 8 Mbps preset.
 - Keeps every hot queue and replay buffer bounded; overload drops frames instead of
   allowing RAM use or latency to grow without limit.
 
@@ -46,7 +47,9 @@ every release.
 4. Press **Save last … seconds** or `Alt+C` for a replay clip.
 5. Press **Start recording** or `Alt+R` for a full recording.
 
-`Alt+X` hides or restores the UI. Source, microphone, and mode selections are remembered.
+`Alt+X` hides or restores the UI by default. All three shortcuts accept Ctrl/Alt/Shift/Win
+combinations, apply immediately, and persist with the rest of the settings. Source, microphone,
+and mode selections are remembered.
 Capture mode/source and microphone changes apply immediately; encoder and media format
 changes apply after restarting Klip.
 
@@ -121,7 +124,7 @@ To assemble the portable ZIP and installer after building:
 .\packaging\package-win64.ps1 `
   -BuildDirectory .\build\Release `
   -FfmpegRoot .\dependencies\ffmpeg-installed\x64-windows-klip `
-  -Version 0.3.0 `
+  -Version 3.0.1 `
   -VcpkgInstalledDirectory .\build\vcpkg_installed
 ```
 
