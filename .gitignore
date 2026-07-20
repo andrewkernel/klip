@@ -34,4 +34,5 @@ compile_commands.json
 /recordings/
 *.log
 /imgui.ini
+/website/.git-local-history-*
 *.partial
