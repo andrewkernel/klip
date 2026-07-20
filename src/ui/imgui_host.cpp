@@ -10,31 +10,33 @@ namespace {
 void ApplyStyle() {
   ImGui::StyleColorsDark();
   auto& style = ImGui::GetStyle();
-  style.WindowRounding = 14.0F;
-  style.FrameRounding = 10.0F;
-  style.GrabRounding = 10.0F;
-  style.PopupRounding = 10.0F;
-  style.ScrollbarRounding = 10.0F;
+  style.WindowRounding = 10.0F;
+  style.FrameRounding = 7.0F;
+  style.GrabRounding = 7.0F;
+  style.PopupRounding = 8.0F;
+  style.ScrollbarRounding = 8.0F;
   style.WindowBorderSize = 0.0F;
   style.WindowPadding = ImVec2(24.0F, 20.0F);
-  style.ItemSpacing = ImVec2(10.0F, 9.0F);
-  style.FramePadding = ImVec2(12.0F, 9.0F);
+  style.ItemSpacing = ImVec2(11.0F, 10.0F);
+  style.FramePadding = ImVec2(12.0F, 8.0F);
   auto* colors = style.Colors;
-  colors[ImGuiCol_WindowBg] = ImVec4(0.04F, 0.06F, 0.09F, 1.0F);
-  colors[ImGuiCol_PopupBg] = ImVec4(0.06F, 0.08F, 0.12F, 0.99F);
-  colors[ImGuiCol_Border] = ImVec4(0.18F, 0.21F, 0.27F, 1.0F);
-  colors[ImGuiCol_TitleBg] = ImVec4(0.04F, 0.06F, 0.09F, 1.0F);
-  colors[ImGuiCol_TitleBgActive] = ImVec4(0.06F, 0.08F, 0.12F, 1.0F);
-  colors[ImGuiCol_Button] = ImVec4(0.40F, 0.17F, 0.72F, 1.0F);
-  colors[ImGuiCol_ButtonHovered] = ImVec4(0.52F, 0.24F, 0.88F, 1.0F);
-  colors[ImGuiCol_ButtonActive] = ImVec4(0.34F, 0.13F, 0.64F, 1.0F);
-  colors[ImGuiCol_FrameBg] = ImVec4(0.08F, 0.11F, 0.15F, 1.0F);
-  colors[ImGuiCol_FrameBgHovered] = ImVec4(0.11F, 0.14F, 0.19F, 1.0F);
-  colors[ImGuiCol_Header] = ImVec4(0.35F, 0.14F, 0.62F, 0.75F);
-  colors[ImGuiCol_HeaderHovered] = ImVec4(0.48F, 0.21F, 0.82F, 0.90F);
-  colors[ImGuiCol_CheckMark] = ImVec4(0.70F, 0.34F, 1.0F, 1.0F);
-  colors[ImGuiCol_SliderGrab] = ImVec4(0.64F, 0.29F, 0.96F, 1.0F);
-  colors[ImGuiCol_PlotHistogram] = ImVec4(0.69F, 0.34F, 1.0F, 1.0F);
+  colors[ImGuiCol_Text] = ImVec4(0.94F, 0.93F, 0.91F, 1.0F);
+  colors[ImGuiCol_TextDisabled] = ImVec4(0.46F, 0.47F, 0.44F, 1.0F);
+  colors[ImGuiCol_WindowBg] = ImVec4(0.035F, 0.043F, 0.039F, 1.0F);
+  colors[ImGuiCol_PopupBg] = ImVec4(0.055F, 0.058F, 0.067F, 0.99F);
+  colors[ImGuiCol_Border] = ImVec4(0.22F, 0.22F, 0.24F, 0.86F);
+  colors[ImGuiCol_TitleBg] = ImVec4(0.035F, 0.043F, 0.039F, 1.0F);
+  colors[ImGuiCol_TitleBgActive] = ImVec4(0.05F, 0.05F, 0.06F, 1.0F);
+  colors[ImGuiCol_Button] = ImVec4(0.39F, 0.17F, 0.70F, 1.0F);
+  colors[ImGuiCol_ButtonHovered] = ImVec4(0.51F, 0.25F, 0.86F, 1.0F);
+  colors[ImGuiCol_ButtonActive] = ImVec4(0.32F, 0.12F, 0.61F, 1.0F);
+  colors[ImGuiCol_FrameBg] = ImVec4(0.075F, 0.078F, 0.09F, 1.0F);
+  colors[ImGuiCol_FrameBgHovered] = ImVec4(0.105F, 0.108F, 0.12F, 1.0F);
+  colors[ImGuiCol_Header] = ImVec4(0.34F, 0.14F, 0.61F, 0.72F);
+  colors[ImGuiCol_HeaderHovered] = ImVec4(0.48F, 0.22F, 0.80F, 0.90F);
+  colors[ImGuiCol_CheckMark] = ImVec4(0.72F, 0.46F, 1.0F, 1.0F);
+  colors[ImGuiCol_SliderGrab] = ImVec4(0.68F, 0.40F, 0.97F, 1.0F);
+  colors[ImGuiCol_PlotHistogram] = ImVec4(0.72F, 0.43F, 1.0F, 1.0F);
 }
 
 }  // namespace
@@ -55,7 +57,8 @@ bool ImGuiHost::Initialize(HWND window, ID3D11Device* device, ID3D11DeviceContex
                                                &font_config);
   io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\seguisb.ttf", 17.0F, &font_config);
   io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeuib.ttf", 30.0F, &font_config);
-  io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\seguisb.ttf", 42.0F, &font_config);
+  io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeuil.ttf", 44.0F, &font_config);
+  io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\consola.ttf", 13.0F, &font_config);
   if (regular == nullptr) io.Fonts->AddFontDefault();
   io.FontDefault = regular;
   ApplyStyle();
