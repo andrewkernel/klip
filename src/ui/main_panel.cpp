@@ -10,33 +10,33 @@
 namespace klip {
 namespace {
 
-constexpr ImVec4 kMuted{0.58F, 0.61F, 0.69F, 1.0F};
-constexpr ImVec4 kLavender{0.68F, 0.33F, 1.0F, 1.0F};
-constexpr ImVec4 kMint{0.22F, 0.84F, 0.49F, 1.0F};
-constexpr ImVec4 kCoral{1.0F, 0.31F, 0.38F, 1.0F};
-constexpr ImU32 kBackgroundTop = IM_COL32(12, 17, 25, 255);
-constexpr ImU32 kBackgroundBottom = IM_COL32(8, 12, 19, 255);
-constexpr ImU32 kPanel = IM_COL32(16, 22, 31, 245);
-constexpr ImU32 kPanelHover = IM_COL32(21, 28, 39, 255);
-constexpr ImU32 kPanelBorder = IM_COL32(44, 51, 64, 255);
-constexpr ImU32 kDivider = IM_COL32(39, 46, 57, 210);
-constexpr ImU32 kTextU32 = IM_COL32(238, 240, 247, 255);
-constexpr ImU32 kMutedU32 = IM_COL32(151, 157, 173, 255);
-constexpr ImU32 kPurple = IM_COL32(150, 72, 255, 255);
-constexpr ImU32 kPurpleBright = IM_COL32(184, 91, 255, 255);
-constexpr ImU32 kGreen = IM_COL32(57, 211, 124, 255);
-constexpr ImU32 kRed = IM_COL32(255, 78, 93, 255);
+constexpr ImVec4 kMuted{0.48F, 0.49F, 0.46F, 1.0F};
+constexpr ImVec4 kLavender{0.70F, 0.46F, 0.98F, 1.0F};
+constexpr ImVec4 kMint{0.30F, 0.80F, 0.49F, 1.0F};
+constexpr ImVec4 kCoral{1.0F, 0.38F, 0.43F, 1.0F};
+constexpr ImU32 kBackgroundTop = IM_COL32(9, 11, 10, 255);
+constexpr ImU32 kBackgroundBottom = IM_COL32(10, 9, 14, 255);
+constexpr ImU32 kPanel = IM_COL32(15, 17, 20, 246);
+constexpr ImU32 kPanelHover = IM_COL32(20, 22, 26, 255);
+constexpr ImU32 kPanelBorder = IM_COL32(52, 52, 58, 210);
+constexpr ImU32 kDivider = IM_COL32(239, 238, 232, 34);
+constexpr ImU32 kTextU32 = IM_COL32(239, 238, 232, 255);
+constexpr ImU32 kMutedU32 = IM_COL32(132, 134, 128, 255);
+constexpr ImU32 kPurple = IM_COL32(126, 57, 230, 255);
+constexpr ImU32 kPurpleBright = IM_COL32(183, 119, 255, 255);
+constexpr ImU32 kGreen = IM_COL32(76, 205, 125, 255);
+constexpr ImU32 kRed = IM_COL32(255, 97, 110, 255);
 
 const char* StatusText(CaptureStatus status) {
   switch (status) {
-    case CaptureStatus::kIdle: return "IDLE";
-    case CaptureStatus::kStarting: return "STARTING";
-    case CaptureStatus::kBuffering: return "BUFFER LIVE";
-    case CaptureStatus::kSaving: return "SAVING CLIP";
-    case CaptureStatus::kStopping: return "STOPPING";
-    case CaptureStatus::kFailed: return "NEEDS ATTENTION";
+    case CaptureStatus::kIdle: return "idle";
+    case CaptureStatus::kStarting: return "starting";
+    case CaptureStatus::kBuffering: return "buffer live";
+    case CaptureStatus::kSaving: return "saving clip";
+    case CaptureStatus::kStopping: return "stopping";
+    case CaptureStatus::kFailed: return "needs attention";
   }
-  return "IDLE";
+  return "idle";
 }
 
 ImVec4 StatusColor(CaptureStatus status) {
@@ -46,16 +46,18 @@ ImVec4 StatusColor(CaptureStatus status) {
   return kMuted;
 }
 
-void SectionLabel(const char* text) {
-  ImGui::Spacing();
-  ImGui::TextColored(kMuted, "%s", text);
-  ImGui::Separator();
-}
-
 ImFont* UiFont(std::size_t index) {
   const auto& fonts = ImGui::GetIO().Fonts->Fonts;
   return index < static_cast<std::size_t>(fonts.Size) ? fonts[static_cast<int>(index)]
                                                        : ImGui::GetFont();
+}
+
+void SectionLabel(const char* text) {
+  ImGui::Spacing();
+  ImGui::PushFont(UiFont(4));
+  ImGui::TextColored(kMuted, "%s", text);
+  ImGui::PopFont();
+  ImGui::Separator();
 }
 
 void DrawText(ImDrawList* draw, ImFont* font, float size, ImVec2 position, ImU32 color,
@@ -68,7 +70,7 @@ float TextWidth(ImFont* font, float size, std::string_view text) {
 }
 
 void DrawCard(ImDrawList* draw, ImVec2 minimum, ImVec2 size, bool hovered = false,
-              ImU32 fill = kPanel, ImU32 border = kPanelBorder, float rounding = 12.0F) {
+              ImU32 fill = kPanel, ImU32 border = kPanelBorder, float rounding = 8.0F) {
   const ImVec2 maximum{minimum.x + size.x, minimum.y + size.y};
   draw->AddRectFilled(minimum, maximum, hovered ? kPanelHover : fill, rounding);
   draw->AddRect(minimum, maximum, border, rounding, 0, 1.0F);
@@ -317,10 +319,11 @@ void MainPanel::Render(const ApplicationSnapshot& snapshot, const AppConfig& con
                           ImGuiCond_Always);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
                       settings_open_ ? ImVec2{30.0F, 24.0F} : ImVec2{0.0F, 0.0F});
-  ImGui::Begin("Klip", nullptr,
-               ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                   ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar |
-                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+  ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                                  ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar;
+  if (!settings_open_)
+    window_flags |= ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+  ImGui::Begin("Klip", nullptr, window_flags);
 
   if (settings_open_)
     RenderSettings(snapshot, config, commands);
@@ -338,16 +341,17 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
   const ImVec2 window_max{window_min.x + window_size.x, window_min.y + window_size.y};
   draw->AddRectFilledMultiColor(window_min, window_max, kBackgroundTop, kBackgroundTop,
                                 kBackgroundBottom, kBackgroundBottom);
-  draw->AddCircleFilled({window_min.x + 180.0F, window_min.y + 70.0F}, 250.0F,
-                        IM_COL32(75, 42, 128, 18), 64);
-  draw->AddCircleFilled({window_max.x - 120.0F, window_min.y + 360.0F}, 310.0F,
-                        IM_COL32(43, 71, 108, 12), 64);
-  draw->AddRect(window_min, window_max, IM_COL32(48, 56, 70, 255), 14.0F, 0, 1.0F);
+  draw->AddCircleFilled({window_min.x + 185.0F, window_min.y + 85.0F}, 255.0F,
+                        IM_COL32(104, 48, 184, 14), 64);
+  draw->AddCircleFilled({window_max.x - 95.0F, window_min.y + 345.0F}, 300.0F,
+                        IM_COL32(100, 45, 175, 8), 64);
+  draw->AddRect(window_min, window_max, IM_COL32(54, 53, 60, 210), 10.0F, 0, 1.0F);
 
   auto* regular = UiFont(0);
   auto* semibold = UiFont(1);
   auto* title_font = UiFont(2);
   auto* number_font = UiFont(3);
+  auto* label_font = UiFont(4);
   constexpr float margin_x = 42.0F;
   const float content_width = window_size.x - margin_x * 2.0F;
   const ImVec2 content{window_min.x + margin_x, window_min.y};
@@ -356,24 +360,24 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
   DrawText(draw, title_font, 29.0F, {content.x + 50.0F, window_min.y + 29.0F}, kTextU32,
            "Klip");
   const char* status_text = snapshot.status == CaptureStatus::kBuffering
-                                ? "READY"
+                                ? "ready"
                                 : StatusText(snapshot.status);
   const ImU32 status_color = ImGui::ColorConvertFloat4ToU32(StatusColor(snapshot.status));
-  const float status_width = TextWidth(semibold, 15.0F, status_text);
+  const float status_width = TextWidth(label_font, 12.0F, status_text);
   const float status_x = content.x + content_width - status_width;
   draw->AddCircleFilled({status_x - 18.0F, window_min.y + 45.0F}, 5.5F, status_color);
-  DrawText(draw, semibold, 15.0F, {status_x, window_min.y + 35.0F}, kMutedU32,
+  DrawText(draw, label_font, 12.0F, {status_x, window_min.y + 37.0F}, kMutedU32,
            status_text);
 
   const float hero_y = window_min.y + 96.0F;
-  DrawText(draw, semibold, 14.0F, {content.x, hero_y}, kMutedU32, "CLIP LENGTH");
+  DrawText(draw, label_font, 11.0F, {content.x, hero_y}, kMutedU32, "clip length / replay");
   char clip_seconds[24]{};
   std::snprintf(clip_seconds, sizeof(clip_seconds), "%.0f", config.clip_duration_seconds);
   DrawText(draw, number_font, 42.0F, {content.x, hero_y + 24.0F}, kTextU32, clip_seconds);
   const float seconds_x = content.x + TextWidth(number_font, 42.0F, clip_seconds) + 12.0F;
   DrawText(draw, regular, 17.0F, {seconds_x, hero_y + 48.0F}, kMutedU32, "seconds");
   char replay_copy[64]{};
-  std::snprintf(replay_copy, sizeof(replay_copy), "Saves the last %.0f seconds",
+  std::snprintf(replay_copy, sizeof(replay_copy), "keeps the last %.0f seconds ready",
                 config.clip_duration_seconds);
   DrawText(draw, regular, 14.0F, {content.x, hero_y + 88.0F}, kMutedU32, replay_copy);
   const float hero_divider_x = content.x + 276.0F;
@@ -383,7 +387,7 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
                         !snapshot.finalizing_recording &&
                         snapshot.metrics.rolling_buffer_seconds >= 1.0;
   char save_label[80]{};
-  std::snprintf(save_label, sizeof(save_label), "SAVE LAST %.0f SECONDS",
+  std::snprintf(save_label, sizeof(save_label), "save last %.0f seconds",
                 config.clip_duration_seconds);
   const float action_gap = 26.0F;
   const float action_start_x = hero_divider_x + 58.0F;
@@ -397,8 +401,8 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
   const bool save_hovered = ImGui::IsItemHovered();
   if (!can_save) ImGui::EndDisabled();
   DrawCard(draw, save_pos, action_size, save_hovered && can_save,
-           can_save ? IM_COL32(105, 43, 211, 255) : IM_COL32(48, 42, 62, 255),
-           can_save ? kPurpleBright : kPanelBorder, 13.0F);
+           can_save ? IM_COL32(100, 39, 193, 255) : IM_COL32(36, 31, 43, 255),
+           can_save ? IM_COL32(177, 111, 255, 235) : kPanelBorder, 9.0F);
   draw->AddCircleFilled({save_pos.x + 42.0F, save_pos.y + 47.0F}, 22.0F,
                         IM_COL32(255, 255, 255, can_save ? 18 : 8));
   DrawClipIcon(draw, {save_pos.x + 42.0F, save_pos.y + 47.0F},
@@ -408,8 +412,8 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
   const ImVec2 save_pill{save_pos.x + action_size.x - 86.0F, save_pos.y + 32.0F};
   draw->AddRectFilled(save_pill, {save_pill.x + 68.0F, save_pill.y + 31.0F},
                       IM_COL32(255, 255, 255, 15), 7.0F);
-  DrawText(draw, regular, 14.0F, {save_pill.x + 12.0F, save_pill.y + 7.0F},
-           can_save ? IM_COL32(224, 213, 247, 255) : kMutedU32, "Alt + C");
+  DrawText(draw, label_font, 11.0F, {save_pill.x + 11.0F, save_pill.y + 9.0F},
+           can_save ? IM_COL32(224, 213, 247, 255) : kMutedU32, "alt + c");
   if (save_clicked && can_save && commands.save_clip) commands.save_clip();
 
   const bool record_disabled =
@@ -424,41 +428,49 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
   if (record_disabled) ImGui::EndDisabled();
   DrawCard(draw, record_pos, action_size, record_hovered && !record_disabled,
            snapshot.recording ? IM_COL32(55, 24, 31, 255) : kPanel,
-           snapshot.recording ? kRed : kPanelBorder, 13.0F);
+           snapshot.recording ? kRed : kPanelBorder, 9.0F);
   DrawRecordIcon(draw, {record_pos.x + 42.0F, record_pos.y + 47.0F},
                  snapshot.recording ? kRed : kTextU32);
-  const char* record_label = snapshot.recording ? "STOP RECORDING" : "START RECORDING";
+  const char* record_label = snapshot.recording ? "stop recording" : "start recording";
   DrawText(draw, semibold, 17.0F, {record_pos.x + 75.0F, record_pos.y + 36.0F},
            record_disabled ? kMutedU32 : kTextU32, record_label);
   const ImVec2 record_pill{record_pos.x + action_size.x - 86.0F, record_pos.y + 32.0F};
   draw->AddRectFilled(record_pill, {record_pill.x + 68.0F, record_pill.y + 31.0F},
                       IM_COL32(255, 255, 255, 10), 7.0F);
-  DrawText(draw, regular, 14.0F, {record_pill.x + 12.0F, record_pill.y + 7.0F}, kMutedU32,
-           "Alt + R");
+  DrawText(draw, label_font, 11.0F, {record_pill.x + 11.0F, record_pill.y + 9.0F}, kMutedU32,
+           "alt + r");
   if (record_clicked && !record_disabled && commands.toggle_recording)
     commands.toggle_recording();
   if (snapshot.recording) {
     char recording_time[32]{};
-    std::snprintf(recording_time, sizeof(recording_time), "REC  %02d:%02d",
+    std::snprintf(recording_time, sizeof(recording_time), "rec / %02d:%02d",
                   static_cast<int>(snapshot.recording_seconds) / 60,
                   static_cast<int>(snapshot.recording_seconds) % 60);
     DrawText(draw, regular, 12.0F, {record_pos.x + 76.0F, record_pos.y + 61.0F}, kRed,
              recording_time);
   } else if (snapshot.finalizing_recording) {
     DrawText(draw, regular, 12.0F, {record_pos.x + 76.0F, record_pos.y + 61.0F}, kMutedU32,
-             "FINALIZING...");
+             "finalizing...");
   }
 
   const float section_line_y = window_min.y + 247.0F;
   draw->AddLine({window_min.x + 1.0F, section_line_y}, {window_max.x - 1.0F, section_line_y},
                 kDivider, 1.0F);
-  DrawText(draw, semibold, 14.0F, {content.x, section_line_y + 24.0F}, kMutedU32,
-           "CAPTURE SOURCE");
+  DrawText(draw, label_font, 11.0F, {content.x, section_line_y + 25.0F}, kMutedU32,
+           "capture source / choose one");
+  bool show_capture_highlight = config.capture_border;
+  ImGui::SetCursorScreenPos({content.x + content_width - 224.0F, section_line_y + 17.0F});
+  if (ImGui::Checkbox("show capture highlight", &show_capture_highlight) &&
+      commands.set_capture_border) {
+    commands.set_capture_border(show_capture_highlight);
+  }
+  if (ImGui::IsItemHovered())
+    ImGui::SetTooltip("Keeps the Windows selection border visible. Turning this off does not stop capture.");
 
   const bool source_disabled = snapshot.recording || snapshot.finalizing_recording ||
                                snapshot.status == CaptureStatus::kSaving;
   int mode = snapshot.target_mode == CaptureTargetMode::kDisplay ? 1 : 0;
-  constexpr const char* modes[] = {"Game / Window", "Display"};
+  constexpr const char* modes[] = {"game / window", "display"};
   const float capture_y = section_line_y + 52.0F;
   const float capture_gap = 20.0F;
   const ImVec2 capture_size{(content_width - capture_gap) * 0.5F, 78.0F};
@@ -473,8 +485,8 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
   DrawCard(draw, mode_pos, capture_size, mode_hovered && !source_disabled);
   DrawMonitorIcon(draw, {mode_pos.x + 42.0F, mode_pos.y + 39.0F},
                   source_disabled ? kMutedU32 : IM_COL32(202, 207, 218, 255));
-  DrawText(draw, regular, 12.0F, {mode_pos.x + 84.0F, mode_pos.y + 21.0F}, kMutedU32,
-           "MODE");
+  DrawText(draw, label_font, 10.0F, {mode_pos.x + 84.0F, mode_pos.y + 21.0F}, kMutedU32,
+           "mode");
   DrawText(draw, semibold, 17.0F, {mode_pos.x + 84.0F, mode_pos.y + 41.0F},
            source_disabled ? kMutedU32 : kTextU32, modes[mode]);
   DrawChevron(draw, {mode_pos.x + capture_size.x - 34.0F, mode_pos.y + 39.0F}, kMutedU32);
@@ -484,8 +496,8 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {8.0F, 8.0F});
   ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 10.0F);
   ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1.0F);
-  ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4{0.055F, 0.075F, 0.105F, 1.0F});
-  ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{0.35F, 0.22F, 0.49F, 1.0F});
+  ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4{0.052F, 0.055F, 0.063F, 1.0F});
+  ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{0.29F, 0.23F, 0.36F, 1.0F});
   if (ImGui::BeginPopup("capture-mode-popup", ImGuiWindowFlags_NoTitleBar)) {
     for (int option = 0; option < IM_ARRAYSIZE(modes); ++option) {
       ImGui::PushID(option);
@@ -505,7 +517,7 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
   const auto selected_mode = mode == 1 ? CaptureTargetMode::kDisplay
                                        : CaptureTargetMode::kGameWindow;
   const auto& sources = mode == 1 ? snapshot.display_sources : snapshot.game_sources;
-  const char* selected_label = sources.empty() ? "No compatible source found" : "Choose a source";
+  const char* selected_label = sources.empty() ? "no compatible source found" : "choose a source";
   for (const auto& source : sources) {
     if (source.id == snapshot.selected_capture_source_id) {
       selected_label = source.label.c_str();
@@ -524,8 +536,8 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
   DrawCard(draw, source_pos, capture_size, source_hovered && !source_disabled);
   DrawControllerIcon(draw, {source_pos.x + 42.0F, source_pos.y + 39.0F},
                      source_disabled ? kMutedU32 : IM_COL32(202, 207, 218, 255));
-  DrawText(draw, regular, 12.0F, {source_pos.x + 84.0F, source_pos.y + 21.0F}, kMutedU32,
-           "SOURCE");
+  DrawText(draw, label_font, 10.0F, {source_pos.x + 84.0F, source_pos.y + 21.0F}, kMutedU32,
+           "source");
   const auto compact_source = Ellipsize(
       semibold, 17.0F, CompactSourceLabel(selected_label), capture_size.x - 140.0F);
   DrawText(draw, semibold, 17.0F, {source_pos.x + 84.0F, source_pos.y + 41.0F},
@@ -539,8 +551,8 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {8.0F, 8.0F});
   ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 10.0F);
   ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1.0F);
-  ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4{0.055F, 0.075F, 0.105F, 1.0F});
-  ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{0.35F, 0.22F, 0.49F, 1.0F});
+  ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4{0.052F, 0.055F, 0.063F, 1.0F});
+  ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{0.29F, 0.23F, 0.36F, 1.0F});
   if (ImGui::BeginPopup("capture-source-popup", ImGuiWindowFlags_NoTitleBar)) {
     for (const auto& source : sources) {
       const bool selected = source.id == snapshot.selected_capture_source_id;
@@ -560,17 +572,18 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
   ImGui::PopStyleVar(3);
 
   const float audio_title_y = capture_y + capture_size.y + 22.0F;
-  DrawText(draw, semibold, 14.0F, {content.x, audio_title_y}, kMutedU32, "AUDIO");
+  DrawText(draw, label_font, 11.0F, {content.x, audio_title_y + 1.0F}, kMutedU32,
+           "audio / live mix");
   constexpr float audio_row_height = 52.0F;
   constexpr float audio_row_gap = 6.0F;
   const float audio_row_y = audio_title_y + 27.0F;
   const ImVec2 audio_row_size{content_width, audio_row_height};
   const float level_x = content.x + 265.0F;
   const float gain_width = content_width - 585.0F;
-  DrawCard(draw, {content.x, audio_row_y}, audio_row_size, false, kPanel, kPanelBorder, 10.0F);
+  DrawCard(draw, {content.x, audio_row_y}, audio_row_size, false, kPanel, kPanelBorder, 7.0F);
   DrawSpeakerIcon(draw, {content.x + 38.0F, audio_row_y + 26.0F}, kMutedU32);
   DrawText(draw, semibold, 13.0F, {content.x + 76.0F, audio_row_y + 18.0F}, kMutedU32,
-           "DESKTOP AUDIO");
+           "desktop audio");
   float desktop_gain = static_cast<float>(config.desktop_audio_gain);
   if (GainSlider("##desktop-gain", {level_x, audio_row_y + 15.0F}, gain_width, desktop_gain) &&
       commands.set_desktop_audio_gain) {
@@ -592,13 +605,13 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
   }
   DrawText(draw, semibold, 13.0F, {content.x + content_width - 59.0F, audio_row_y + 18.0F},
            snapshot.desktop_audio_active ? kGreen : kMutedU32,
-           snapshot.desktop_audio_active ? "LIVE" : "QUIET");
+           snapshot.desktop_audio_active ? "live" : "quiet");
 
   const float microphone_y = audio_row_y + audio_row_height + audio_row_gap;
-  DrawCard(draw, {content.x, microphone_y}, audio_row_size, false, kPanel, kPanelBorder, 10.0F);
+  DrawCard(draw, {content.x, microphone_y}, audio_row_size, false, kPanel, kPanelBorder, 7.0F);
   DrawMicrophoneIcon(draw, {content.x + 38.0F, microphone_y + 24.0F}, kMutedU32);
   DrawText(draw, semibold, 13.0F, {content.x + 76.0F, microphone_y + 18.0F}, kMutedU32,
-           "MICROPHONE");
+           "microphone");
   bool microphone_enabled = snapshot.microphone_enabled;
   float microphone_gain = static_cast<float>(config.microphone_audio_gain);
   if (GainSlider("##microphone-gain", {level_x, microphone_y + 15.0F}, gain_width,
@@ -625,7 +638,7 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
     microphone_gain_dirty_ = false;
   }
 
-  const char* selected_microphone = "No microphone detected";
+  const char* selected_microphone = "no microphone detected";
   if (snapshot.selected_microphone_index >= 0 &&
       snapshot.selected_microphone_index < static_cast<int>(snapshot.microphones.size()))
     selected_microphone = snapshot.microphones[static_cast<std::size_t>(
@@ -637,7 +650,7 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
   const bool input_clicked = ImGui::IsItemClicked();
   const bool input_hovered = ImGui::IsItemHovered();
   if (input_clicked && !snapshot.microphones.empty()) ImGui::OpenPopup("microphone-popup");
-  DrawCard(draw, input_pos, audio_row_size, input_hovered, kPanel, kPanelBorder, 10.0F);
+  DrawCard(draw, input_pos, audio_row_size, input_hovered, kPanel, kPanelBorder, 7.0F);
   DrawMicrophoneIcon(draw, {content.x + 38.0F, input_y + 24.0F}, kPurpleBright);
   std::string_view microphone_name = selected_microphone;
   constexpr std::string_view microphone_prefix = "Microphone (";
@@ -645,17 +658,17 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
     microphone_name.remove_prefix(microphone_prefix.size());
     microphone_name.remove_suffix(1);
   }
-  std::string mic_label = "MICROPHONE (";
+  std::string mic_label = "microphone (";
   mic_label += microphone_name;
   mic_label += ')';
   DrawText(draw, semibold, 13.0F, {content.x + 76.0F, input_y + 18.0F}, kMutedU32,
            mic_label);
   DrawProgress(draw, {content.x + 420.0F, input_y + 23.0F},
                {content_width - 660.0F, 6.0F}, snapshot.microphone_level, kGreen);
-  DrawText(draw, regular, 11.0F,
-           {content.x + content_width - 202.0F, input_y + 10.0F}, kMutedU32, "INPUT");
+  DrawText(draw, label_font, 9.0F,
+           {content.x + content_width - 202.0F, input_y + 10.0F}, kMutedU32, "input");
   DrawText(draw, semibold, 15.0F,
-           {content.x + content_width - 202.0F, input_y + 28.0F}, kTextU32, "Mic");
+           {content.x + content_width - 202.0F, input_y + 28.0F}, kTextU32, "mic");
   DrawChevron(draw, {content.x + content_width - 34.0F, input_y + 26.0F}, kMutedU32);
   const float microphone_popup_height =
       std::clamp(18.0F + static_cast<float>(snapshot.microphones.size()) * 42.0F, 60.0F,
@@ -666,8 +679,8 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {8.0F, 8.0F});
   ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 10.0F);
   ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1.0F);
-  ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4{0.055F, 0.075F, 0.105F, 1.0F});
-  ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{0.35F, 0.22F, 0.49F, 1.0F});
+  ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4{0.052F, 0.055F, 0.063F, 1.0F});
+  ImGui::PushStyleColor(ImGuiCol_Border, ImVec4{0.29F, 0.23F, 0.36F, 1.0F});
   if (ImGui::BeginPopup("microphone-popup", ImGuiWindowFlags_NoTitleBar)) {
     for (int index = 0; index < static_cast<int>(snapshot.microphones.size()); ++index) {
       const bool selected = index == snapshot.selected_microphone_index;
@@ -690,11 +703,11 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
   const float system_line_y = input_y + audio_row_height + 20.0F;
   draw->AddLine({window_min.x + 1.0F, system_line_y}, {window_max.x - 1.0F, system_line_y},
                 kDivider, 1.0F);
-  DrawText(draw, semibold, 14.0F, {content.x, system_line_y + 21.0F}, kMutedU32,
-           "SYSTEM STATUS");
+  DrawText(draw, label_font, 11.0F, {content.x, system_line_y + 22.0F}, kMutedU32,
+           "system status / capture health");
   const float metric_y = system_line_y + 49.0F;
   constexpr float metric_width = 190.0F;
-  const char* metric_labels[] = {"FPS", "ENCODER", "BUFFER RAM", "DROPPED"};
+  const char* metric_labels[] = {"fps", "encoder", "buffer ram", "dropped"};
   char fps_value[24]{};
   char buffer_value[24]{};
   char dropped_value[24]{};
@@ -711,7 +724,7 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
                                  buffer_value, dropped_value};
   for (int metric = 0; metric < 4; ++metric) {
     const float x = content.x + metric * metric_width;
-    DrawText(draw, regular, 12.0F, {x, metric_y}, kMutedU32, metric_labels[metric]);
+    DrawText(draw, label_font, 9.0F, {x, metric_y}, kMutedU32, metric_labels[metric]);
     DrawText(draw, semibold, 20.0F, {x, metric_y + 24.0F}, kTextU32, metric_values[metric]);
     if (metric < 3)
       draw->AddLine({x + metric_width - 26.0F, metric_y - 4.0F},
@@ -724,23 +737,23 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
   ImGui::InvisibleButton("##open-clips-folder", folder_size);
   const bool folder_clicked = ImGui::IsItemClicked();
   const bool folder_hovered = ImGui::IsItemHovered();
-  DrawCard(draw, folder_pos, folder_size, folder_hovered, IM_COL32(24, 22, 37, 255),
-           kPurpleBright, 10.0F);
+  DrawCard(draw, folder_pos, folder_size, folder_hovered, IM_COL32(22, 19, 29, 255),
+           IM_COL32(166, 101, 235, 230), 7.0F);
   DrawFolderIcon(draw, {folder_pos.x + 34.0F, folder_pos.y + 26.0F}, kPurpleBright);
   DrawText(draw, semibold, 14.0F, {folder_pos.x + 59.0F, folder_pos.y + 17.0F},
-           kPurpleBright, "OPEN CLIPS FOLDER");
+           kPurpleBright, "open clips folder");
   if (folder_clicked && commands.open_output_folder) commands.open_output_folder();
 
   const char* hotkey_copy = hotkeys_available
-                                ? "Alt + R   Record     Alt + C   Clip     Alt + X   Hide"
-                                : "Global hotkeys unavailable";
-  const float hotkey_width = TextWidth(regular, 12.0F, hotkey_copy);
-  DrawText(draw, regular, 12.0F,
+                                ? "alt + r  record   /   alt + c  clip   /   alt + x  hide"
+                                : "global hotkeys unavailable";
+  const float hotkey_width = TextWidth(label_font, 10.0F, hotkey_copy);
+  DrawText(draw, label_font, 10.0F,
            {content.x + content_width - hotkey_width, metric_y + 60.0F}, kMutedU32,
            hotkey_copy);
 
   if (snapshot.last_error.has_value()) {
-    std::string issue = "ISSUE: " + snapshot.last_error->ToString();
+    std::string issue = "issue / " + snapshot.last_error->ToString();
     if (issue.size() > 88) issue.resize(88);
     DrawText(draw, regular, 11.0F, {content.x, metric_y + 62.0F}, kRed, issue);
   }
@@ -770,86 +783,87 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
                   kMutedU32, 2.0F);
   }
   DrawText(draw, regular, 13.0F, {settings_pos.x + 38.0F, settings_pos.y + 9.0F},
-           kMutedU32, "Settings");
+           kMutedU32, "settings");
   if (settings_clicked) {
     ResetDraft(config);
     settings_open_ = true;
   }
   constexpr std::string_view version = "v0.3.0";
-  DrawText(draw, regular, 12.0F,
-           {content.x + content_width - TextWidth(regular, 12.0F, version), footer_y + 20.0F},
+  DrawText(draw, label_font, 10.0F,
+           {content.x + content_width - TextWidth(label_font, 10.0F, version), footer_y + 21.0F},
            kMutedU32, version);
 }
 
 void MainPanel::RenderSettings(const ApplicationSnapshot& snapshot, const AppConfig& config,
                                const UiCommands& commands) {
   if (!draft_initialized_) ResetDraft(config);
-  ImGui::TextColored(kLavender, "KLIP");
+  ImGui::TextColored(kLavender, "Klip");
   ImGui::SameLine();
-  ImGui::TextColored(kMuted, " / SETTINGS");
+  ImGui::TextColored(kMuted, " / settings");
   ImGui::SameLine(ImGui::GetWindowWidth() - 72.0F);
-  if (ImGui::SmallButton("BACK")) settings_open_ = false;
+  if (ImGui::SmallButton("back")) settings_open_ = false;
   ImGui::TextColored(kMuted,
-                     "Hardware-first defaults keep capture light. Saved changes apply on restart.");
+                     "hardware-first defaults keep capture light. saved changes apply on restart.");
 
-  SectionLabel("VIDEO");
+  SectionLabel("video / quality");
   int fps = draft_.target_fps == 30 ? 0 : 1;
-  constexpr const char* frame_rates[] = {"30 FPS - lightest", "60 FPS - recommended"};
-  if (ImGui::Combo("Frame rate", &fps, frame_rates, IM_ARRAYSIZE(frame_rates)))
+  constexpr const char* frame_rates[] = {"30 fps / lightest", "60 fps / recommended"};
+  if (ImGui::Combo("frame rate", &fps, frame_rates, IM_ARRAYSIZE(frame_rates)))
     draft_.target_fps = fps == 0 ? 30U : 60U;
 
   int resolution = draft_.output_width == 1280 ? 2 : draft_.output_width == 1920 ? 1 : 0;
-  constexpr const char* resolutions[] = {"Source resolution", "1920 x 1080", "1280 x 720"};
-  if (ImGui::Combo("Output size", &resolution, resolutions, IM_ARRAYSIZE(resolutions))) {
+  constexpr const char* resolutions[] = {"source resolution", "1920 x 1080", "1280 x 720"};
+  if (ImGui::Combo("output size", &resolution, resolutions, IM_ARRAYSIZE(resolutions))) {
     draft_.output_width = resolution == 1 ? 1920U : resolution == 2 ? 1280U : 0U;
     draft_.output_height = resolution == 1 ? 1080U : resolution == 2 ? 720U : 0U;
   }
 
   int bitrate_mbps = static_cast<int>(draft_.video_bitrate / 1'000'000);
-  if (ImGui::SliderInt("Video bitrate", &bitrate_mbps, 4, 40, "%d Mbps")) {
+  if (ImGui::SliderInt("video bitrate", &bitrate_mbps, 4, 40, "%d Mbps")) {
     draft_.video_bitrate = static_cast<std::int64_t>(bitrate_mbps) * 1'000'000;
     ResizeReplayBudget(draft_);
   }
   int encoder = EncoderProfile(draft_.encoder_preferences);
-  constexpr const char* encoders[] = {"Auto - recommended", "NVIDIA NVENC", "AMD AMF",
-                                       "Windows hardware (Intel + fallback)"};
-  if (ImGui::Combo("Encoder", &encoder, encoders, IM_ARRAYSIZE(encoders)))
+  constexpr const char* encoders[] = {"auto / recommended", "NVIDIA NVENC", "AMD AMF",
+                                       "Windows hardware / Intel + fallback"};
+  if (ImGui::Combo("encoder", &encoder, encoders, IM_ARRAYSIZE(encoders)))
     SetEncoderProfile(draft_, encoder);
   int quality = static_cast<int>(draft_.encoder_quality);
-  constexpr const char* qualities[] = {"Performance", "Balanced", "Quality"};
-  if (ImGui::Combo("Encoder load", &quality, qualities, IM_ARRAYSIZE(qualities)))
+  constexpr const char* qualities[] = {"performance", "balanced", "quality"};
+  if (ImGui::Combo("encoder load", &quality, qualities, IM_ARRAYSIZE(qualities)))
     draft_.encoder_quality = static_cast<EncoderQuality>(quality);
-  ImGui::Checkbox("Capture mouse cursor", &draft_.capture_cursor);
+  ImGui::Checkbox("capture mouse cursor", &draft_.capture_cursor);
+  ImGui::Checkbox("show Windows capture highlight", &draft_.capture_border);
 
-  SectionLabel("CLIPS AND AUDIO");
+  SectionLabel("clips / audio");
   int clip_seconds = static_cast<int>(draft_.clip_duration_seconds);
-  if (ImGui::SliderInt("Replay length", &clip_seconds, 15, 300, "%d seconds")) {
+  if (ImGui::SliderInt("replay length", &clip_seconds, 15, 300, "%d seconds")) {
     draft_.clip_duration_seconds = static_cast<double>(clip_seconds);
     ResizeReplayBudget(draft_);
   }
   int audio_bitrate = static_cast<int>(draft_.audio_bitrate / 1000);
-  if (ImGui::SliderInt("Audio bitrate", &audio_bitrate, 96, 320, "%d kbps")) {
+  if (ImGui::SliderInt("audio bitrate", &audio_bitrate, 96, 320, "%d kbps")) {
     draft_.audio_bitrate = static_cast<std::int64_t>(audio_bitrate) * 1000;
     ResizeReplayBudget(draft_);
   }
   int desktop_volume = static_cast<int>(draft_.desktop_audio_gain * 100.0 + 0.5);
-  if (ImGui::SliderInt("Desktop volume", &desktop_volume, 0, 200, "%d%%"))
+  if (ImGui::SliderInt("desktop volume", &desktop_volume, 0, 200, "%d%%"))
     draft_.desktop_audio_gain = static_cast<double>(desktop_volume) / 100.0;
   int microphone_volume = static_cast<int>(draft_.microphone_audio_gain * 100.0 + 0.5);
-  if (ImGui::SliderInt("Microphone volume", &microphone_volume, 0, 200, "%d%%"))
+  if (ImGui::SliderInt("microphone volume", &microphone_volume, 0, 200, "%d%%"))
     draft_.microphone_audio_gain = static_cast<double>(microphone_volume) / 100.0;
-  ImGui::Checkbox("Enable microphone (voice / keyboard clicks) on launch",
+  ImGui::Checkbox("enable microphone (voice / keyboard clicks) on launch",
                   &draft_.microphone_enabled);
 
-  SectionLabel("STORAGE");
-  ImGui::InputText("Clips folder", clips_path_.data(), clips_path_.size());
-  ImGui::InputText("Recordings folder", recordings_path_.data(), recordings_path_.size());
+  SectionLabel("storage / local files");
+  ImGui::InputText("clips folder", clips_path_.data(), clips_path_.size());
+  ImGui::InputText("recordings folder", recordings_path_.data(), recordings_path_.size());
   ImGui::TextColored(kMuted,
-                     "Replay RAM is capped at %.0f MiB. Encoded packets are shared, not duplicated.",
+                     "replay RAM is capped at %.0f MiB. encoded packets are shared, not duplicated.",
                      static_cast<double>(draft_.rolling_buffer_bytes) / (1024.0 * 1024.0));
 
-  SectionLabel("SAVE");
-  if (ImGui::Button("SAVE SETTINGS", {-1.0F, 42.0F}) && commands.save_settings) {
+  SectionLabel("save / apply");
+  if (ImGui::Button("save settings", {-1.0F, 42.0F}) && commands.save_settings) {
     draft_.output_directory = ParsePath(clips_path_.data());
     draft_.recording_directory = ParsePath(recordings_path_.data());
     commands.save_settings(draft_);
@@ -858,7 +872,7 @@ void MainPanel::RenderSettings(const ApplicationSnapshot& snapshot, const AppCon
     ImGui::TextColored(snapshot.settings_restart_required ? ImVec4{1.0F, 0.73F, 0.25F, 1.0F}
                                                          : kMint,
                        "%s", snapshot.settings_message.c_str());
-  ImGui::TextWrapped("Capture mode, source selection, and audio volume apply immediately. Video, "
+  ImGui::TextWrapped("capture mode, source selection, and audio volume apply immediately. video, "
                      "encoder, buffer, and storage changes apply after restarting Klip.");
 }
 

@@ -17,6 +17,7 @@ struct UiCommands {
   std::function<void(CaptureTargetMode)> set_target_mode;
   std::function<void(CaptureTargetMode, std::uint64_t, const std::string&)>
       select_capture_source;
+  std::function<void(bool)> set_capture_border;
   std::function<void(bool)> set_microphone_enabled;
   std::function<void(float)> set_desktop_audio_gain;
   std::function<void(float)> set_microphone_audio_gain;

@@ -130,6 +130,7 @@ bool AssignValue(AppConfig& config, const std::string& key, const std::string& v
   if (key == "rolling_buffer_bytes") return ParseInteger(value, config.rolling_buffer_bytes);
   if (key == "microphone_enabled") return ParseBool(value, config.microphone_enabled);
   if (key == "capture_cursor") return ParseBool(value, config.capture_cursor);
+  if (key == "capture_border") return ParseBool(value, config.capture_border);
   if (key == "output_directory") {
     config.output_directory = ParsePath(value);
     return true;
@@ -258,6 +259,7 @@ bool SaveConfig(const std::filesystem::path& path, const AppConfig& config,
   output << "rolling_buffer_bytes=" << config.rolling_buffer_bytes << '\n';
   output << "microphone_enabled=" << (config.microphone_enabled ? "true" : "false") << '\n';
   output << "capture_cursor=" << (config.capture_cursor ? "true" : "false") << '\n';
+  output << "capture_border=" << (config.capture_border ? "true" : "false") << '\n';
   output << "capture_mode=" << ModeName(config.target_mode) << '\n';
   output << "encoder_quality=" << QualityName(config.encoder_quality) << '\n';
   output << "encoder_preferences=" << JoinEncoders(config.encoder_preferences) << '\n';

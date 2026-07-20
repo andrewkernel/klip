@@ -157,6 +157,17 @@ void GraphicsCapture::SelectTarget(CaptureTargetMode mode, std::uint64_t source_
   target_dirty_.store(true, std::memory_order_release);
 }
 
+void GraphicsCapture::SetBorderRequired(bool required) {
+  std::scoped_lock lock(session_mutex_);
+  config_.capture_border = required;
+  if (session_ == nullptr) return;
+  try {
+    session_.IsBorderRequired(required);
+  } catch (const winrt::hresult_error&) {
+    logger_.Warning("Capture highlight control is unavailable on this Windows build");
+  }
+}
+
 bool GraphicsCapture::CreateInteropDevice(Error& error) {
   winrt::com_ptr<IDXGIDevice> dxgi;
   auto result = device_->QueryInterface(IID_PPV_ARGS(dxgi.put()));
@@ -349,6 +360,11 @@ bool GraphicsCapture::StartSessionLocked(const CaptureTarget& target, Error& err
       session_.IsCursorCaptureEnabled(config_.capture_cursor);
     } catch (const winrt::hresult_error&) {
       logger_.Warning("Cursor capture control is unavailable on this Windows build");
+    }
+    try {
+      session_.IsBorderRequired(config_.capture_border);
+    } catch (const winrt::hresult_error&) {
+      logger_.Warning("Capture highlight control is unavailable on this Windows build");
     }
     session_.StartCapture();
     active_target_ = target;

@@ -111,10 +111,20 @@ bool KlipApplication::Initialize(HINSTANCE instance, int show_command, Error& er
 int KlipApplication::Run() {
   if (!initialized_.load(std::memory_order_acquire)) return 1;
   const auto commands = BuildUiCommands();
+  auto next_hotkey_retry = std::chrono::steady_clock::now();
   while (window_.PumpMessages()) {
     const auto ui_deadline =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(33);
     UpdateRollingMetrics();
+    bool hotkeys_available = hotkeys_.SaveRegistered() && hotkeys_.RecordRegistered() &&
+                             hotkeys_.ToggleRegistered();
+    const auto now = std::chrono::steady_clock::now();
+    if (!hotkeys_available && now >= next_hotkey_retry) {
+      Error hotkey_error;
+      hotkeys_available = hotkeys_.Register(window_.Handle(), config_.hotkeys, hotkey_error);
+      if (hotkeys_available) logger_.Info("Global hotkeys registered");
+      next_hotkey_retry = now + std::chrono::seconds(3);
+    }
     if (!window_.Visible()) {
       std::this_thread::sleep_until(ui_deadline);
       continue;
@@ -129,9 +139,7 @@ int KlipApplication::Run() {
       }
     }
     imgui_.BeginFrame();
-    panel_.Render(state_.Snapshot(), config_, commands,
-                  hotkeys_.SaveRegistered() && hotkeys_.RecordRegistered() &&
-                      hotkeys_.ToggleRegistered());
+    panel_.Render(state_.Snapshot(), config_, commands, hotkeys_available);
     constexpr float clear_color[4] = {0.06F, 0.07F, 0.09F, 1.0F};
     if (graphics_.BeginFrame(clear_color)) {
       imgui_.Render();
@@ -214,6 +222,12 @@ UiCommands KlipApplication::BuildUiCommands() {
             else
               config_.preferred_game_title = label;
             capture_.SelectTarget(mode, id);
+            PersistSettings(config_, false);
+          },
+      .set_capture_border =
+          [this](bool required) {
+            config_.capture_border = required;
+            capture_.SetBorderRequired(required);
             PersistSettings(config_, false);
           },
       .set_microphone_enabled =
