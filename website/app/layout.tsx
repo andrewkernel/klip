@@ -4,14 +4,20 @@ import "./globals.css";
 
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
-  const host =
-    requestHeaders.get("x-forwarded-host") ??
-    requestHeaders.get("host") ??
-    "localhost:3000";
-  const protocol =
-    requestHeaders.get("x-forwarded-proto") ??
-    (host.startsWith("localhost") ? "http" : "https");
-  const metadataBase = new URL(`${protocol}://${host}`);
+  // Proxies can forward comma-separated values or malformed host headers.
+  // Keep metadata generation non-fatal so a custom Vercel domain never turns
+  // an otherwise healthy page into a 500 response.
+  const forwardedHost = requestHeaders.get("x-forwarded-host")?.split(",")[0]?.trim();
+  const requestHost = requestHeaders.get("host")?.split(",")[0]?.trim();
+  const host = forwardedHost || requestHost || "localhost:3000";
+  const forwardedProtocol = requestHeaders.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  const protocol = forwardedProtocol || (host.startsWith("localhost") ? "http" : "https");
+  let metadataBase: URL;
+  try {
+    metadataBase = new URL(`${protocol}://${host}`);
+  } catch {
+    metadataBase = new URL("https://klip-ten-zeta.vercel.app");
+  }
 
   return {
     metadataBase,
