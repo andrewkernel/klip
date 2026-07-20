@@ -35,4 +35,7 @@ compile_commands.json
 *.log
 /imgui.ini
 /website/.git-local-history-*
+/pr-body.md
+/website/pnpm-lock.yaml
+/website/pnpm-workspace.yaml
 *.partial
