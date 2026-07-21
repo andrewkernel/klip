@@ -28,6 +28,7 @@ ClipWriter::~ClipWriter() noexcept { Stop(); }
 bool ClipWriter::Start(AppConfig config, SnapshotProvider video, SnapshotProvider audio,
                        Error& error) {
   if (running_.exchange(true, std::memory_order_acq_rel)) return true;
+  requests_.Reset();
   config_ = std::move(config);
   video_snapshot_ = std::move(video);
   audio_snapshot_ = std::move(audio);

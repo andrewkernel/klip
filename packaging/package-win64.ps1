@@ -56,9 +56,24 @@ Copy-Item -LiteralPath (Join-Path $repositoryRoot "EULA.txt") -Destination $stag
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "PRIVACY.md") -Destination $stageRoot
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "THIRD_PARTY_NOTICES.md") -Destination $stageRoot
 
+$fontSource = Join-Path $repositoryRoot "assets\fonts"
+$fontStage = Join-Path $stageRoot "fonts"
+New-Item -ItemType Directory -Force -Path $fontStage | Out-Null
+foreach ($fontName in @("Inter-Regular.ttf", "Inter-Medium.ttf", "Inter-SemiBold.ttf", "Inter-Bold.ttf")) {
+  $fontPath = Join-Path $fontSource $fontName
+  if (-not (Test-Path -LiteralPath $fontPath -PathType Leaf)) {
+    throw "Required bundled font was not found: $fontPath"
+  }
+  Copy-Item -LiteralPath $fontPath -Destination $fontStage
+}
+
 $licensesRoot = Join-Path $stageRoot "licenses"
 $ffmpegLicenses = Join-Path $licensesRoot "ffmpeg"
 New-Item -ItemType Directory -Force -Path $ffmpegLicenses | Out-Null
+$interLicenses = Join-Path $licensesRoot "inter"
+New-Item -ItemType Directory -Force -Path $interLicenses | Out-Null
+Copy-Item -LiteralPath (Join-Path $fontSource "LICENSE-Inter.txt") `
+  -Destination (Join-Path $interLicenses "LICENSE.txt")
 $ffmpegNotices = @(Get-ChildItem -LiteralPath $ffmpegPath -File |
   Where-Object { $_.Name -match "^(LICENSE|COPYING|README)" })
 $vcpkgFfmpegCopyright = Join-Path $ffmpegPath "share\ffmpeg\copyright"

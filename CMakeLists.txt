@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(Klip VERSION 3.0.1 LANGUAGES CXX)
+project(Klip VERSION 3.0.2 LANGUAGES CXX)
 
 option(KLIP_BUILD_TESTS "Build deterministic Klip core tests" ON)
 option(KLIP_BUILD_APP "Build the Windows capture application" ON)
@@ -25,7 +25,9 @@ add_library(klip_core STATIC
   src/core/clip_selection.cpp
   src/core/config.cpp
   src/core/config_store.cpp
-  src/core/encoder_selection.cpp)
+  src/core/encoder_tuning.cpp
+  src/core/encoder_selection.cpp
+  src/core/video_timeline.cpp)
 target_include_directories(klip_core PUBLIC include)
 target_compile_features(klip_core PUBLIC cxx_std_20)
 target_link_libraries(klip_core PUBLIC Threads::Threads)
@@ -115,6 +117,7 @@ target_link_libraries(klip_media
     shell32
     uuid
     user32
+    windowscodecs
     windowsapp
     runtimeobject)
 klip_project_warnings(klip_media)
@@ -132,6 +135,17 @@ target_link_libraries(klip_app PRIVATE
   imgui::imgui
   "${FFMPEG_AVUTIL_LIBRARY}")
 klip_project_warnings(klip_app)
+
+set(KLIP_FONT_FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/Inter-Regular.ttf"
+  "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/Inter-Medium.ttf"
+  "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/Inter-SemiBold.ttf"
+  "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/Inter-Bold.ttf")
+add_custom_command(TARGET klip_app POST_BUILD
+  COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:klip_app>/fonts"
+  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+          ${KLIP_FONT_FILES} "$<TARGET_FILE_DIR:klip_app>/fonts"
+  COMMAND_EXPAND_LISTS)
 
 if(FFMPEG_ROOT)
   file(GLOB FFMPEG_RUNTIME_DLLS CONFIGURE_DEPENDS

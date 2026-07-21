@@ -31,7 +31,8 @@ Tagged builds publish two self-contained x64 artifacts on the
 
 The package includes the required FFmpeg DLLs and uses the static Microsoft C/C++
 runtime. Windows 10 version 1903 or newer, or Windows 11, is required. A current GPU
-driver and a supported hardware H.264 encoder are strongly recommended.
+driver and a supported hardware H.264 encoder are strongly recommended; Windows Media
+Foundation software encoding is available as a higher-CPU fallback.
 
 The installer shows the [End User License Agreement](EULA.txt) and requires explicit
 acceptance before installation. See [system requirements](docs/system-requirements.md) for
@@ -51,7 +52,9 @@ every release.
 combinations, apply immediately, and persist with the rest of the settings. Source, microphone,
 and mode selections are remembered.
 Capture mode/source and microphone changes apply immediately; encoder and media format
-changes apply after restarting Klip.
+changes briefly refresh the media pipeline when **Save & Apply** is pressed, without
+restarting Klip. If a new media configuration cannot start, Klip restores the previous
+working configuration.
 
 Klip's game/window mode is a low-overhead Windows Graphics Capture path, not an injected
 DirectX/OpenGL hook. It is safer and much smaller than OBS's dedicated Game Capture
@@ -84,6 +87,10 @@ Defaults cap each raw/converted video queue at four frames, the recording backlo
 packets, and the encoded replay buffer at 192 MiB. Capture is throttled before conversion to
 the selected FPS. The most recent converted texture is reused with GPU-to-GPU copies on a fixed
 frame clock, so static windows still produce valid constant-rate media without CPU pixel copies.
+Balanced and Quality modes use recording-oriented H.264 High-profile tuning: a two-second GOP,
+two B-frames, HQ preset/tuning, lookahead, adaptive quantization, and multipass where the selected
+hardware backend supports them. SDR capture is converted and tagged explicitly as BT.709
+limited-range video so compatible players do not guess the color matrix or range.
 The audio mixer waits for a complete AAC-sized sample window before encoding, preventing short
 WASAPI packets from being padded into a repeating click/static pattern.
 The dashboard reports encoded FPS, selected encoder, replay RAM, and dropped frames so load is
@@ -124,7 +131,7 @@ To assemble the portable ZIP and installer after building:
 .\packaging\package-win64.ps1 `
   -BuildDirectory .\build\Release `
   -FfmpegRoot .\dependencies\ffmpeg-installed\x64-windows-klip `
-  -Version 3.0.1 `
+  -Version 3.0.2 `
   -VcpkgInstalledDirectory .\build\vcpkg_installed
 ```
 

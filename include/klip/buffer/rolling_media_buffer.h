@@ -26,14 +26,15 @@ class RollingMediaBuffer {
   bool Push(const AVPacket* packet, StreamKind kind, AVRational time_base);
   [[nodiscard]] std::vector<EncodedPacket> Snapshot(double seconds) const;
   [[nodiscard]] RollingBufferStats Stats() const;
+  void Reconfigure(double maximum_seconds, std::size_t maximum_bytes);
   void Clear();
 
  private:
   void EvictLocked();
   void RefreshVideoBoundsLocked() noexcept;
 
-  const double maximum_seconds_;
-  const std::size_t maximum_bytes_;
+  double maximum_seconds_;
+  std::size_t maximum_bytes_;
   mutable std::mutex mutex_;
   std::deque<EncodedPacket> packets_;
   std::size_t bytes_ = 0;

@@ -55,7 +55,11 @@ std::vector<EncodedPacket> RollingMediaBuffer::Snapshot(double seconds) const {
     }
     result.reserve(range.end - range.begin);
     for (std::size_t index = range.begin; index < range.end; ++index) {
-      if (descriptors[index].pts_100ns < clip_start) {
+      // With B-frames, packets after the opening keyframe in decode order can legitimately carry
+      // an earlier presentation timestamp. Dropping those video packets creates holes in the
+      // replay cadence; only trim pre-roll audio against the keyframe's presentation boundary.
+      if (descriptors[index].kind == StreamKind::kAudio &&
+          descriptors[index].pts_100ns < clip_start) {
         continue;
       }
       const auto& packet = packets_[index];
@@ -79,6 +83,13 @@ RollingBufferStats RollingMediaBuffer::Stats() const {
         static_cast<double>(last_video_pts_100ns_ - first_video_pts_100ns_) / 10'000'000.0;
   }
   return stats;
+}
+
+void RollingMediaBuffer::Reconfigure(double maximum_seconds, std::size_t maximum_bytes) {
+  std::scoped_lock lock(mutex_);
+  maximum_seconds_ = maximum_seconds;
+  maximum_bytes_ = maximum_bytes;
+  EvictLocked();
 }
 
 void RollingMediaBuffer::Clear() {

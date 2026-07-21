@@ -121,6 +121,12 @@ class BlockingBoundedQueue {
     not_empty_.notify_all();
   }
 
+  void Reset() {
+    std::scoped_lock lock(mutex_);
+    items_.clear();
+    closed_ = false;
+  }
+
   [[nodiscard]] bool Closed() const {
     std::scoped_lock lock(mutex_);
     return closed_;

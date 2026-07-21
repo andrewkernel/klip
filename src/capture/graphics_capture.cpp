@@ -1,6 +1,9 @@
 #include "klip/capture/graphics_capture.h"
 
+#include "klip/core/video_timeline.h"
+
 #include <dwmapi.h>
+#include <wincodec.h>
 // MinGW's WinRT ABI headers typedef both BYTE and boolean to unsigned char, which makes their
 // IReference specializations collide in C++. C++/WinRT uses bool for the WinRT Boolean ABI.
 // MSVC's Windows SDK declares ABI::Windows::Foundation::boolean as a real type, so replacing it
@@ -15,6 +18,7 @@
 #endif
 
 #include <algorithm>
+#include <cmath>
 #include <exception>
 #include <sstream>
 #include <utility>
@@ -39,6 +43,12 @@ std::string WideToUtf8(const std::wstring& value) {
   return output;
 }
 
+bool MatchesPreferredWindow(const std::string& label, const std::string& preferred) {
+  if (label == preferred) return true;
+  const auto executable = preferred.rfind("  [");
+  return executable != std::string::npos && label.ends_with(preferred.substr(executable));
+}
+
 }  // namespace
 
 GraphicsCapture::GraphicsCapture(VideoEncoder& encoder, ApplicationState& state, Logger& logger)
@@ -59,6 +69,7 @@ bool GraphicsCapture::Initialize(ID3D11Device* device, ID3D11DeviceContext* cont
     return false;
   }
   config_ = config;
+  preview_enabled_.store(config.capture_preview_enabled, std::memory_order_release);
   application_window_ = application_window;
   target_mode_.store(config.target_mode, std::memory_order_release);
   device_.copy_from(device);
@@ -70,6 +81,10 @@ bool GraphicsCapture::Initialize(ID3D11Device* device, ID3D11DeviceContext* cont
     error = Error{ErrorComponent::kCapture, "query D3D11 interfaces",
                   "D3D11.4 video interfaces are unavailable"};
     return false;
+  }
+  if (config_.static_overlay_enabled) {
+    Error overlay_error;
+    if (!LoadStaticOverlay(overlay_error)) logger_.Warning(overlay_error.ToString());
   }
   if (!CreateInteropDevice(error) || !CreateFence(error)) {
     return false;
@@ -90,6 +105,10 @@ bool GraphicsCapture::Initialize(ID3D11Device* device, ID3D11DeviceContext* cont
   raw_queue_ = std::make_unique<SpscQueue<RawFrame>>(config.raw_frame_queue_capacity);
   encode_queue_ = std::make_unique<SpscQueue<ConvertedFrame>>(config.encode_queue_capacity);
   RefreshSourceOptions();
+  if (config_.live_overlay_enabled) {
+    Error overlay_error;
+    if (!StartLiveOverlay(overlay_error)) logger_.Warning(overlay_error.ToString());
+  }
   return true;
 }
 
@@ -131,6 +150,7 @@ void GraphicsCapture::Stop() noexcept {
     std::scoped_lock lock(session_mutex_);
     StopSessionLocked();
   }
+  StopLiveOverlay();
   processing_thread_ = {};
   encoding_thread_ = {};
   recycle_enabled_.store(false, std::memory_order_release);
@@ -140,6 +160,23 @@ void GraphicsCapture::Stop() noexcept {
     std::scoped_lock lock(texture_pool_mutex_);
     texture_pool_.clear();
   }
+  {
+    std::scoped_lock lock(preview_mutex_);
+    preview_view_ = nullptr;
+    preview_texture_ = nullptr;
+    preview_width_ = 0;
+    preview_height_ = 0;
+    static_overlay_view_ = nullptr;
+    static_overlay_texture_ = nullptr;
+    static_overlay_width_ = 0;
+    static_overlay_height_ = 0;
+    live_overlay_view_ = nullptr;
+    live_overlay_texture_ = nullptr;
+    live_overlay_width_ = 0;
+    live_overlay_height_ = 0;
+    next_live_overlay_update_ = {};
+  }
+  overlay_warning_logged_ = false;
   logger_.Info("Graphics capture stopped");
 }
 
@@ -166,6 +203,25 @@ void GraphicsCapture::SetBorderRequired(bool required) {
   } catch (const winrt::hresult_error&) {
     logger_.Warning("Capture highlight control is unavailable on this Windows build");
   }
+}
+
+void GraphicsCapture::SetPreviewEnabled(bool enabled) noexcept {
+  preview_enabled_.store(enabled, std::memory_order_release);
+  config_.capture_preview_enabled = enabled;
+  if (!enabled) {
+    std::scoped_lock lock(preview_mutex_);
+    preview_view_ = nullptr;
+    preview_texture_ = nullptr;
+    preview_width_ = 0;
+    preview_height_ = 0;
+  }
+  logger_.Info(enabled ? "Low-rate capture preview enabled" : "Capture preview disabled");
+}
+
+CapturePreview GraphicsCapture::Preview() const {
+  std::scoped_lock lock(preview_mutex_);
+  auto overlay = config_.static_overlay_enabled ? static_overlay_view_ : live_overlay_view_;
+  return CapturePreview{preview_view_, std::move(overlay), preview_width_, preview_height_};
 }
 
 bool GraphicsCapture::CreateInteropDevice(Error& error) {
@@ -252,10 +308,7 @@ void GraphicsCapture::RefreshSourceOptions() {
   }
   if (selected_window == 0 && !config_.preferred_game_title.empty()) {
     const auto preferred = std::find_if(windows.begin(), windows.end(), [&](const auto& option) {
-      if (option.label == config_.preferred_game_title) return true;
-      const auto executable = config_.preferred_game_title.rfind("  [");
-      return executable != std::string::npos &&
-             option.label.ends_with(config_.preferred_game_title.substr(executable));
+      return MatchesPreferredWindow(option.label, config_.preferred_game_title);
     });
     if (preferred != windows.end()) {
       selected_window = preferred->id;
@@ -409,6 +462,192 @@ void GraphicsCapture::StopSessionLocked() noexcept {
   active_target_ = {};
 }
 
+bool GraphicsCapture::StartLiveOverlay(Error& error) {
+  HWND target = nullptr;
+  struct SearchContext {
+    GraphicsCapture* capture;
+    const std::string* preferred;
+    HWND* result;
+  } search{this, &config_.live_overlay_window_title, &target};
+  EnumWindows(
+      [](HWND window, LPARAM parameter) -> BOOL {
+        auto* context = reinterpret_cast<SearchContext*>(parameter);
+        if (!context->capture->IsWindowCandidate(window)) return TRUE;
+        const auto label = GraphicsCapture::WindowLabel(window);
+        if (!MatchesPreferredWindow(label, *context->preferred)) return TRUE;
+        *context->result = window;
+        return FALSE;
+      },
+      reinterpret_cast<LPARAM>(&search));
+  if (target == nullptr) {
+    error = Error{ErrorComponent::kCapture, "find live overlay window",
+                  "open the selected Camera or handcam preview window before starting Klip",
+                  {}, {}, config_.live_overlay_window_title};
+    return false;
+  }
+
+  try {
+    std::scoped_lock lock(overlay_session_mutex_);
+    overlay_window_ = target;
+    overlay_item_ = CreateForWindow(target);
+    const auto size = overlay_item_.Size();
+    if (size.Width <= 0 || size.Height <= 0) {
+      error = Error{ErrorComponent::kCapture, "inspect live overlay window",
+                    "the selected window has an invalid size"};
+      return false;
+    }
+    {
+      std::scoped_lock preview_lock(preview_mutex_);
+      live_overlay_width_ = static_cast<std::uint32_t>(size.Width);
+      live_overlay_height_ = static_cast<std::uint32_t>(size.Height);
+    }
+    overlay_frame_pool_ =
+        winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool::CreateFreeThreaded(
+            interop_device_,
+            winrt::Windows::Graphics::DirectX::DirectXPixelFormat::B8G8R8A8UIntNormalized, 2,
+            size);
+    overlay_frame_token_ =
+        overlay_frame_pool_.FrameArrived({this, &GraphicsCapture::OnOverlayFrameArrived});
+    overlay_closed_token_ =
+        overlay_item_.Closed({this, &GraphicsCapture::OnOverlayTargetClosed});
+    overlay_session_ = overlay_frame_pool_.CreateCaptureSession(overlay_item_);
+    try {
+      overlay_session_.IsCursorCaptureEnabled(false);
+      overlay_session_.IsBorderRequired(false);
+    } catch (const winrt::hresult_error&) {
+      logger_.Warning("Handcam cursor or highlight control is unavailable on this Windows build");
+    }
+    overlay_session_.StartCapture();
+    logger_.Info("Live overlay target: " + WindowLabel(target));
+    return true;
+  } catch (const winrt::hresult_error& exception) {
+    error = MakeHresultError(ErrorComponent::kCapture, "start live overlay capture",
+                             exception.code().value, config_.live_overlay_window_title);
+    StopLiveOverlay();
+    return false;
+  } catch (const std::exception& exception) {
+    error = Error{ErrorComponent::kCapture, "start live overlay capture", exception.what(),
+                  {}, {}, config_.live_overlay_window_title};
+    StopLiveOverlay();
+    return false;
+  }
+}
+
+void GraphicsCapture::StopLiveOverlay() noexcept {
+  std::scoped_lock lock(overlay_session_mutex_);
+  try {
+    if (overlay_frame_pool_ != nullptr)
+      overlay_frame_pool_.FrameArrived(overlay_frame_token_);
+    if (overlay_item_ != nullptr) overlay_item_.Closed(overlay_closed_token_);
+    if (overlay_session_ != nullptr) overlay_session_.Close();
+    if (overlay_frame_pool_ != nullptr) overlay_frame_pool_.Close();
+  } catch (...) {
+  }
+  overlay_frame_token_ = {};
+  overlay_closed_token_ = {};
+  overlay_session_ = nullptr;
+  overlay_frame_pool_ = nullptr;
+  overlay_item_ = nullptr;
+  overlay_window_ = nullptr;
+  std::scoped_lock preview_lock(preview_mutex_);
+  live_overlay_view_ = nullptr;
+  live_overlay_texture_ = nullptr;
+  live_overlay_width_ = 0;
+  live_overlay_height_ = 0;
+  next_live_overlay_update_ = {};
+}
+
+void GraphicsCapture::OnOverlayFrameArrived(
+    const winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool& sender,
+    const winrt::Windows::Foundation::IInspectable&) {
+  if (!running_.load(std::memory_order_acquire)) return;
+  try {
+    std::scoped_lock session_lock(overlay_session_mutex_);
+    if (!running_.load(std::memory_order_relaxed) || sender == nullptr) return;
+    auto frame = sender.TryGetNextFrame();
+    if (frame == nullptr) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (now < next_live_overlay_update_) {
+      frame.Close();
+      return;
+    }
+    next_live_overlay_update_ = now + std::chrono::milliseconds(33);  // Handcams need ~30 FPS.
+    const auto size = frame.ContentSize();
+    if (size.Width <= 0 || size.Height <= 0) {
+      frame.Close();
+      return;
+    }
+    const auto width = static_cast<std::uint32_t>(size.Width);
+    const auto height = static_cast<std::uint32_t>(size.Height);
+    {
+      std::scoped_lock preview_lock(preview_mutex_);
+      if (width != live_overlay_width_ || height != live_overlay_height_) {
+        live_overlay_width_ = width;
+        live_overlay_height_ = height;
+        live_overlay_view_ = nullptr;
+        live_overlay_texture_ = nullptr;
+        frame.Close();
+        sender.Recreate(
+            interop_device_,
+            winrt::Windows::Graphics::DirectX::DirectXPixelFormat::B8G8R8A8UIntNormalized, 2,
+            size);
+        logger_.Info("Live overlay resolution changed");
+        return;
+      }
+    }
+    auto source = TextureFromSurface(frame.Surface());
+    if (!source) {
+      frame.Close();
+      return;
+    }
+
+    std::scoped_lock converter_lock(converter_mutex_);
+    std::scoped_lock preview_lock(preview_mutex_);
+    if (!live_overlay_texture_) {
+      D3D11_TEXTURE2D_DESC description{};
+      source->GetDesc(&description);
+      description.Width = width;
+      description.Height = height;
+      description.MipLevels = 1;
+      description.ArraySize = 1;
+      description.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+      description.SampleDesc.Count = 1;
+      description.Usage = D3D11_USAGE_DEFAULT;
+      description.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+      description.CPUAccessFlags = 0;
+      description.MiscFlags = 0;
+      auto result = device_->CreateTexture2D(&description, nullptr, live_overlay_texture_.put());
+      if (SUCCEEDED(result))
+        result = device_->CreateShaderResourceView(live_overlay_texture_.get(), nullptr,
+                                                    live_overlay_view_.put());
+      if (FAILED(result)) {
+        live_overlay_texture_ = nullptr;
+        live_overlay_view_ = nullptr;
+        frame.Close();
+        logger_.Warning(MakeHresultError(ErrorComponent::kCapture,
+                                         "allocate live overlay texture", result)
+                            .ToString());
+        return;
+      }
+    }
+    context_->CopyResource(live_overlay_texture_.get(), source.get());
+    frame.Close();
+  } catch (const std::exception& exception) {
+    logger_.Warning(Error{ErrorComponent::kCapture, "receive live overlay frame",
+                          exception.what()}
+                        .ToString());
+  }
+}
+
+void GraphicsCapture::OnOverlayTargetClosed(
+    const winrt::Windows::Graphics::Capture::GraphicsCaptureItem&,
+    const winrt::Windows::Foundation::IInspectable&) {
+  std::scoped_lock lock(preview_mutex_);
+  live_overlay_view_ = nullptr;
+  live_overlay_texture_ = nullptr;
+  logger_.Warning("Live overlay window closed; main capture continues without it");
+}
+
 void GraphicsCapture::OnFrameArrived(
     const winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool& sender,
     const winrt::Windows::Foundation::IInspectable&) {
@@ -458,6 +697,101 @@ void GraphicsCapture::OnTargetClosed(const winrt::Windows::Graphics::Capture::Gr
                                      const winrt::Windows::Foundation::IInspectable&) {
   target_dirty_.store(true, std::memory_order_release);
   logger_.Warning("Capture target closed; selecting a fallback target");
+}
+
+bool GraphicsCapture::LoadStaticOverlay(Error& error) {
+  if (config_.static_overlay_path.empty()) {
+    error = Error{ErrorComponent::kCapture, "load static overlay",
+                  "choose a PNG, JPG, or BMP image first"};
+    return false;
+  }
+  auto path = config_.static_overlay_path;
+  if (path.is_relative()) path = std::filesystem::current_path() / path;
+
+  winrt::com_ptr<IWICImagingFactory> factory;
+  auto result = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                 IID_PPV_ARGS(factory.put()));
+  if (FAILED(result)) {
+    error = MakeHresultError(ErrorComponent::kCapture, "create image decoder", result,
+                             path.string());
+    return false;
+  }
+  winrt::com_ptr<IWICBitmapDecoder> decoder;
+  result = factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
+                                               WICDecodeMetadataCacheOnLoad, decoder.put());
+  if (FAILED(result)) {
+    error = MakeHresultError(ErrorComponent::kCapture, "open static overlay image", result,
+                             path.string());
+    return false;
+  }
+  winrt::com_ptr<IWICBitmapFrameDecode> frame;
+  result = decoder->GetFrame(0, frame.put());
+  if (FAILED(result)) {
+    error = MakeHresultError(ErrorComponent::kCapture, "decode static overlay image", result,
+                             path.string());
+    return false;
+  }
+  UINT width = 0;
+  UINT height = 0;
+  result = frame->GetSize(&width, &height);
+  if (FAILED(result) || width == 0 || height == 0 || width > 8192 || height > 8192) {
+    error = Error{ErrorComponent::kCapture, "inspect static overlay image",
+                  "image dimensions must be between 1 and 8192 pixels", {}, {}, path.string()};
+    return false;
+  }
+  winrt::com_ptr<IWICFormatConverter> converter;
+  result = factory->CreateFormatConverter(converter.put());
+  if (SUCCEEDED(result))
+    result = converter->Initialize(frame.get(), GUID_WICPixelFormat32bppBGRA,
+                                   WICBitmapDitherTypeNone, nullptr, 0.0,
+                                   WICBitmapPaletteTypeCustom);
+  if (FAILED(result)) {
+    error = MakeHresultError(ErrorComponent::kCapture, "convert static overlay image", result,
+                             path.string());
+    return false;
+  }
+  const auto stride = width * 4U;
+  std::vector<std::uint8_t> pixels(static_cast<std::size_t>(stride) * height);
+  result = converter->CopyPixels(nullptr, stride, static_cast<UINT>(pixels.size()), pixels.data());
+  if (FAILED(result)) {
+    error = MakeHresultError(ErrorComponent::kCapture, "read static overlay pixels", result,
+                             path.string());
+    return false;
+  }
+  D3D11_TEXTURE2D_DESC description{};
+  description.Width = width;
+  description.Height = height;
+  description.MipLevels = 1;
+  description.ArraySize = 1;
+  description.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+  description.SampleDesc.Count = 1;
+  // Video-processor input views require a DEFAULT texture and either no bind flags or a
+  // video-compatible bind combination. RENDER_TARGET keeps the texture eligible for the
+  // compositor while SHADER_RESOURCE lets the dashboard preview display the same allocation.
+  description.Usage = D3D11_USAGE_DEFAULT;
+  description.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+  D3D11_SUBRESOURCE_DATA data{};
+  data.pSysMem = pixels.data();
+  data.SysMemPitch = stride;
+  winrt::com_ptr<ID3D11Texture2D> texture;
+  result = device_->CreateTexture2D(&description, &data, texture.put());
+  winrt::com_ptr<ID3D11ShaderResourceView> view;
+  if (SUCCEEDED(result))
+    result = device_->CreateShaderResourceView(texture.get(), nullptr, view.put());
+  if (FAILED(result)) {
+    error = MakeHresultError(ErrorComponent::kCapture, "upload static overlay image", result,
+                             path.string());
+    return false;
+  }
+  {
+    std::scoped_lock lock(preview_mutex_);
+    static_overlay_texture_ = std::move(texture);
+    static_overlay_view_ = std::move(view);
+    static_overlay_width_ = width;
+    static_overlay_height_ = height;
+  }
+  logger_.Info("Static overlay loaded: " + path.string());
+  return true;
 }
 
 bool GraphicsCapture::EnsureConverter(std::uint32_t width, std::uint32_t height, Error& error) {
@@ -519,15 +853,115 @@ bool GraphicsCapture::Convert(const RawFrame& input, ConvertedFrame& output, Err
     error = MakeHresultError(ErrorComponent::kCapture, "create video processor view", result);
     return false;
   }
+  winrt::com_ptr<ID3D11VideoProcessorInputView> overlay_input_view;
+  winrt::com_ptr<ID3D11Texture2D> overlay_texture;
+  std::uint32_t overlay_width = 0;
+  std::uint32_t overlay_height = 0;
+  {
+    std::scoped_lock preview_lock(preview_mutex_);
+    if (config_.static_overlay_enabled && static_overlay_texture_) {
+      overlay_texture = static_overlay_texture_;
+      overlay_width = static_overlay_width_;
+      overlay_height = static_overlay_height_;
+    } else if (config_.live_overlay_enabled && live_overlay_texture_) {
+      overlay_texture = live_overlay_texture_;
+      overlay_width = live_overlay_width_;
+      overlay_height = live_overlay_height_;
+    }
+  }
+  bool overlay_ready = false;
+  if (overlay_texture) {
+    D3D11_VIDEO_PROCESSOR_CAPS capabilities{};
+    if (SUCCEEDED(processor_enumerator_->GetVideoProcessorCaps(&capabilities)) &&
+        capabilities.MaxInputStreams >= 2) {
+      result = video_device_->CreateVideoProcessorInputView(
+          overlay_texture.get(), processor_enumerator_.get(), &input_desc, overlay_input_view.put());
+      overlay_ready = SUCCEEDED(result);
+    }
+    if (!overlay_ready && !overlay_warning_logged_) {
+      logger_.Warning("The current GPU video processor cannot composite the static overlay; "
+                      "capture continues without it");
+      overlay_warning_logged_ = true;
+    }
+  }
   RECT source{0, 0, static_cast<LONG>(input.width), static_cast<LONG>(input.height)};
-  RECT destination{0, 0, static_cast<LONG>(output_width), static_cast<LONG>(output_height)};
-  video_context_->VideoProcessorSetOutputTargetRect(processor_.get(), TRUE, &destination);
+  RECT output_rect{0, 0, static_cast<LONG>(output_width), static_cast<LONG>(output_height)};
+  RECT destination = output_rect;
+  if (config_.scaling_mode == VideoScalingMode::kFit && input.width > 0 && input.height > 0) {
+    const auto input_aspect_scaled =
+        static_cast<std::uint64_t>(input.width) * output_height;
+    const auto output_aspect_scaled =
+        static_cast<std::uint64_t>(output_width) * input.height;
+    if (input_aspect_scaled > output_aspect_scaled) {
+      const auto fitted_height = static_cast<LONG>(
+          static_cast<std::uint64_t>(output_width) * input.height / input.width);
+      const auto offset = (static_cast<LONG>(output_height) - fitted_height) / 2;
+      destination.top = offset;
+      destination.bottom = offset + fitted_height;
+    } else if (input_aspect_scaled < output_aspect_scaled) {
+      const auto fitted_width = static_cast<LONG>(
+          static_cast<std::uint64_t>(output_height) * input.width / input.height);
+      const auto offset = (static_cast<LONG>(output_width) - fitted_width) / 2;
+      destination.left = offset;
+      destination.right = offset + fitted_width;
+    }
+  }
+  D3D11_VIDEO_COLOR background{};
+  background.RGBA.A = 1.0F;
+  video_context_->VideoProcessorSetOutputBackgroundColor(processor_.get(), FALSE, &background);
+  // Windows Graphics Capture supplies full-range RGB. Declare both sides of the conversion
+  // explicitly so the driver produces the same BT.709 limited-range NV12 convention that OBS
+  // uses for SDR recording instead of choosing a vendor-dependent default matrix or range.
+  D3D11_VIDEO_PROCESSOR_COLOR_SPACE input_color{};
+  input_color.RGB_Range = 0;       // Full-range RGB.
+  input_color.YCbCr_Matrix = 1;    // BT.709 when a matrix is consulted.
+  input_color.Nominal_Range = 2;   // 0-255.
+  D3D11_VIDEO_PROCESSOR_COLOR_SPACE output_color{};
+  output_color.RGB_Range = 1;
+  output_color.YCbCr_Matrix = 1;   // BT.709.
+  output_color.Nominal_Range = 1;  // 16-235 (limited/video range).
+  video_context_->VideoProcessorSetStreamFrameFormat(
+      processor_.get(), 0, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE);
+  video_context_->VideoProcessorSetStreamColorSpace(processor_.get(), 0, &input_color);
+  video_context_->VideoProcessorSetOutputColorSpace(processor_.get(), &output_color);
+  video_context_->VideoProcessorSetOutputTargetRect(processor_.get(), TRUE, &output_rect);
   video_context_->VideoProcessorSetStreamSourceRect(processor_.get(), 0, TRUE, &source);
   video_context_->VideoProcessorSetStreamDestRect(processor_.get(), 0, TRUE, &destination);
-  D3D11_VIDEO_PROCESSOR_STREAM stream{};
-  stream.Enable = TRUE;
-  stream.pInputSurface = input_view.get();
-  result = video_context_->VideoProcessorBlt(processor_.get(), output_view.get(), 0, 1, &stream);
+  D3D11_VIDEO_PROCESSOR_STREAM streams[2]{};
+  streams[0].Enable = TRUE;
+  streams[0].pInputSurface = input_view.get();
+  UINT stream_count = 1;
+  if (overlay_ready) {
+    RECT overlay_source{0, 0, static_cast<LONG>(overlay_width),
+                        static_cast<LONG>(overlay_height)};
+    const auto output_w = static_cast<double>(output_width);
+    const auto output_h = static_cast<double>(output_height);
+    RECT overlay_destination{
+        static_cast<LONG>(std::lround(config_.static_overlay_x * output_w)),
+        static_cast<LONG>(std::lround(config_.static_overlay_y * output_h)),
+        static_cast<LONG>(std::lround((config_.static_overlay_x +
+                                      config_.static_overlay_width) * output_w)),
+        static_cast<LONG>(std::lround((config_.static_overlay_y +
+                                      config_.static_overlay_height) * output_h))};
+    overlay_destination.right =
+        std::max(overlay_destination.left + 1, overlay_destination.right);
+    overlay_destination.bottom =
+        std::max(overlay_destination.top + 1, overlay_destination.bottom);
+    video_context_->VideoProcessorSetStreamSourceRect(processor_.get(), 1, TRUE,
+                                                       &overlay_source);
+    video_context_->VideoProcessorSetStreamDestRect(processor_.get(), 1, TRUE,
+                                                     &overlay_destination);
+    video_context_->VideoProcessorSetStreamAlpha(
+        processor_.get(), 1, TRUE, static_cast<float>(config_.static_overlay_opacity));
+    video_context_->VideoProcessorSetStreamFrameFormat(
+        processor_.get(), 1, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE);
+    video_context_->VideoProcessorSetStreamColorSpace(processor_.get(), 1, &input_color);
+    streams[1].Enable = TRUE;
+    streams[1].pInputSurface = overlay_input_view.get();
+    stream_count = 2;
+  }
+  result = video_context_->VideoProcessorBlt(processor_.get(), output_view.get(), 0,
+                                              stream_count, streams);
   if (FAILED(result)) {
     error = MakeHresultError(ErrorComponent::kCapture, "convert frame to NV12", result);
     return false;
@@ -541,6 +975,36 @@ bool GraphicsCapture::Convert(const RawFrame& input, ConvertedFrame& output, Err
   output = ConvertedFrame{std::move(texture), output_width, output_height, input.pts_100ns,
                           fence_value, input.generation};
   return true;
+}
+
+void GraphicsCapture::UpdatePreview(const RawFrame& input) noexcept {
+  if (!preview_enabled_.load(std::memory_order_acquire) || !input.texture) return;
+  const auto now = std::chrono::steady_clock::now();
+  if (now < next_preview_update_) return;
+  next_preview_update_ = now + std::chrono::milliseconds(66);  // About 15 FPS.
+
+  std::scoped_lock lock(preview_mutex_);
+  if (!preview_texture_ || preview_width_ != input.width || preview_height_ != input.height) {
+    D3D11_TEXTURE2D_DESC description{};
+    input.texture->GetDesc(&description);
+    description.Width = input.width;
+    description.Height = input.height;
+    description.MipLevels = 1;
+    description.ArraySize = 1;
+    description.Usage = D3D11_USAGE_DEFAULT;
+    description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    description.CPUAccessFlags = 0;
+    description.MiscFlags = 0;
+    winrt::com_ptr<ID3D11Texture2D> texture;
+    if (FAILED(device_->CreateTexture2D(&description, nullptr, texture.put()))) return;
+    winrt::com_ptr<ID3D11ShaderResourceView> view;
+    if (FAILED(device_->CreateShaderResourceView(texture.get(), nullptr, view.put()))) return;
+    preview_texture_ = std::move(texture);
+    preview_view_ = std::move(view);
+    preview_width_ = input.width;
+    preview_height_ = input.height;
+  }
+  context_->CopyResource(preview_texture_.get(), input.texture.get());
 }
 
 winrt::com_ptr<ID3D11Texture2D> GraphicsCapture::CreateNv12Texture(std::uint32_t width,
@@ -620,6 +1084,7 @@ void GraphicsCapture::ProcessingLoop(std::stop_token stop_token) noexcept {
         coalesced_raw_frames_.fetch_add(1, std::memory_order_relaxed);
       }
       if (raw.generation != capture_generation_.load(std::memory_order_acquire)) continue;
+      UpdatePreview(raw);
       ConvertedFrame converted;
       Error error;
       const bool converted_ok = Convert(raw, converted, error);
@@ -652,9 +1117,12 @@ void GraphicsCapture::EncodingLoop(std::stop_token stop_token) noexcept {
     std::uint32_t latest_width = 0;
     std::uint32_t latest_height = 0;
     std::uint64_t latest_generation = 0;
-    const auto frame_interval = std::chrono::nanoseconds(
-        1'000'000'000LL / static_cast<std::int64_t>(config_.target_fps));
-    auto next_frame = std::chrono::steady_clock::now();
+    const auto target_fps = std::max<std::uint32_t>(1, config_.target_fps);
+    bool timeline_started = false;
+    bool timeline_has_encoded_frame = false;
+    auto timeline_origin = std::chrono::steady_clock::time_point{};
+    std::int64_t media_origin_100ns = 0;
+    std::uint64_t frame_number = 0;
     auto next_encode_error_report = std::chrono::steady_clock::time_point{};
     const auto recycle_latest = [&] {
       if (latest)
@@ -677,18 +1145,29 @@ void GraphicsCapture::EncodingLoop(std::stop_token stop_token) noexcept {
 
     while (!stop_token.stop_requested() && running_.load(std::memory_order_acquire)) {
       const auto generation = capture_generation_.load(std::memory_order_acquire);
-      if (latest && latest_generation != generation) recycle_latest();
+      if (latest && latest_generation != generation) {
+        recycle_latest();
+        timeline_started = false;
+        timeline_has_encoded_frame = false;
+      }
 
       ConvertedFrame candidate;
       while (encode_queue_->TryPop(candidate)) {
         if (candidate.generation != generation || !wait_for_fence(candidate.fence_value))
           continue;
+        const bool start_timeline = !latest || latest_generation != candidate.generation;
         recycle_latest();
         latest = std::move(candidate.texture);
         latest_width = candidate.width;
         latest_height = candidate.height;
         latest_generation = candidate.generation;
-        next_frame = std::chrono::steady_clock::now();
+        if (start_timeline) {
+          // Opening a hardware encoder with lookahead can take several frame intervals. Start the
+          // media clock only after that one-time work completes so an immediate replay does not
+          // contain artificial cadence holes at its opening keyframe.
+          timeline_started = false;
+          timeline_has_encoded_frame = false;
+        }
       }
 
       if (!latest) {
@@ -696,20 +1175,41 @@ void GraphicsCapture::EncodingLoop(std::stop_token stop_token) noexcept {
         continue;
       }
 
-      const auto now = std::chrono::steady_clock::now();
-      if (now < next_frame) {
-        std::this_thread::sleep_until(next_frame);
-        continue;
+      if (!timeline_started) {
+        const auto now = std::chrono::steady_clock::now();
+        Error error;
+        if (!encoder_.Prepare(latest_width, latest_height, error)) {
+          if (now >= next_encode_error_report) {
+            state_.SetError(error);
+            logger_.ErrorMessage(error);
+            next_encode_error_report = now + std::chrono::seconds(5);
+          }
+          std::this_thread::sleep_for(std::chrono::milliseconds(100));
+          continue;
+        }
+        timeline_origin = std::chrono::steady_clock::now();
+        media_origin_100ns = Timestamp100ns();
+        frame_number = 0;
+        timeline_started = true;
+        timeline_has_encoded_frame = false;
       }
 
-      Error error;
-      if (!encoder_.Prepare(latest_width, latest_height, error)) {
-        if (now >= next_encode_error_report) {
-          state_.SetError(error);
-          logger_.ErrorMessage(error);
-          next_encode_error_report = now + std::chrono::seconds(5);
-        }
-        next_frame = now + std::chrono::milliseconds(100);
+      auto now = std::chrono::steady_clock::now();
+      const auto elapsed_ns =
+          std::chrono::duration_cast<std::chrono::nanoseconds>(now - timeline_origin).count();
+      if (elapsed_ns > 0) {
+        // If the encoder genuinely stalls, skip expired schedule slots instead of submitting a
+        // burst of stale frames. Under normal load frame_number advances one at a time, including
+        // deliberate repeats when WGC supplies 59.94-ish input for a requested 60 FPS output.
+        const auto due_frame = static_cast<std::uint64_t>(elapsed_ns) * target_fps /
+                               1'000'000'000ULL;
+        if (due_frame > frame_number) frame_number = due_frame;
+      }
+      const auto next_frame =
+          timeline_origin + std::chrono::nanoseconds(
+                                FixedVideoTimestamp100ns(0, frame_number, target_fps) * 100);
+      if (now < next_frame) {
+        std::this_thread::sleep_until(next_frame);
         continue;
       }
 
@@ -719,7 +1219,7 @@ void GraphicsCapture::EncodingLoop(std::stop_token stop_token) noexcept {
                     "ID3D11Device::CreateTexture2D failed"};
         state_.SetError(error);
         logger_.ErrorMessage(error);
-        next_frame = now + frame_interval;
+        ++frame_number;
         continue;
       }
       // The conversion worker also signals this fence. Reserve the value while holding the
@@ -734,11 +1234,11 @@ void GraphicsCapture::EncodingLoop(std::stop_token stop_token) noexcept {
         signal_result = context4_->Signal(fence_.get(), fence_value);
       }
       if (FAILED(signal_result) || !wait_for_fence(fence_value)) {
-        next_frame = now + frame_interval;
+        ++frame_number;
         continue;
       }
       if (latest_generation != capture_generation_.load(std::memory_order_acquire)) {
-        next_frame = now + frame_interval;
+        ++frame_number;
         continue;
       }
 
@@ -746,24 +1246,27 @@ void GraphicsCapture::EncodingLoop(std::stop_token stop_token) noexcept {
       auto recycler = [this](ID3D11Texture2D* texture, std::uint32_t width, std::uint32_t height) {
         RecycleNv12Texture(texture, width, height);
       };
-      if (!encoder_.Encode(frame.get(), latest_width, latest_height, Timestamp100ns(),
+      Error error;
+      const auto presentation_time =
+          FixedVideoTimestamp100ns(media_origin_100ns, frame_number, target_fps);
+      if (!encoder_.Encode(frame.get(), latest_width, latest_height, presentation_time,
                            std::move(recycler), error)) {
         if (now >= next_encode_error_report) {
           state_.SetError(error);
           logger_.ErrorMessage(error);
           next_encode_error_report = now + std::chrono::seconds(5);
         }
+        if (!timeline_has_encoded_frame) timeline_started = false;
       } else {
         encoded_frames_.fetch_add(1, std::memory_order_relaxed);
         next_encode_error_report = {};
+        timeline_has_encoded_frame = true;
       }
       const auto latency =
           std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
               .count();
       PublishMetrics(latency);
-      next_frame += frame_interval;
-      if (next_frame < std::chrono::steady_clock::now() - frame_interval)
-        next_frame = std::chrono::steady_clock::now() + frame_interval;
+      if (timeline_started) ++frame_number;
     }
     recycle_latest();
   } catch (const std::exception& exception) {

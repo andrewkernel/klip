@@ -72,6 +72,12 @@ void ApplicationState::SetMicrophones(std::vector<std::string> microphones, int 
   snapshot_.selected_microphone_index = selected_index;
 }
 
+void ApplicationState::SetAudioApplications(
+    std::vector<AudioApplicationOption> applications) {
+  std::scoped_lock lock(mutex_);
+  snapshot_.audio_applications = std::move(applications);
+}
+
 void ApplicationState::SetMetrics(const MetricsSnapshot& metrics) {
   std::scoped_lock lock(mutex_);
   snapshot_.metrics = metrics;

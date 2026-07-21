@@ -54,6 +54,29 @@ std::vector<ValidationIssue> ValidateConfig(const AppConfig& config) {
       config.microphone_audio_gain > 2.0) {
     reject("microphone_audio_gain", "must be between 0.0 and 2.0");
   }
+  const auto normalized = [](double value) {
+    return std::isfinite(value) && value >= 0.0 && value <= 1.0;
+  };
+  if (!normalized(config.static_overlay_x))
+    reject("static_overlay_x", "must be between 0.0 and 1.0");
+  if (!normalized(config.static_overlay_y))
+    reject("static_overlay_y", "must be between 0.0 and 1.0");
+  if (!normalized(config.static_overlay_width) || config.static_overlay_width <= 0.0)
+    reject("static_overlay_width", "must be greater than 0.0 and no more than 1.0");
+  if (!normalized(config.static_overlay_height) || config.static_overlay_height <= 0.0)
+    reject("static_overlay_height", "must be greater than 0.0 and no more than 1.0");
+  if (!normalized(config.static_overlay_opacity))
+    reject("static_overlay_opacity", "must be between 0.0 and 1.0");
+  if (config.static_overlay_enabled && config.live_overlay_enabled)
+    reject("overlay_source", "static image and live window cannot both be enabled");
+  if (config.static_overlay_enabled && config.static_overlay_path.empty())
+    reject("static_overlay_path", "choose a PNG, JPG, or BMP image");
+  if (config.live_overlay_enabled && config.live_overlay_window_title.empty())
+    reject("live_overlay_window_title", "choose a live overlay window");
+  if (config.static_overlay_x + config.static_overlay_width > 1.0)
+    reject("static_overlay_width", "overlay must stay inside the output width");
+  if (config.static_overlay_y + config.static_overlay_height > 1.0)
+    reject("static_overlay_height", "overlay must stay inside the output height");
   if (config.output_directory.empty()) {
     reject("output_directory", "must not be empty");
   }
@@ -190,6 +213,38 @@ std::string FormatHotkey(unsigned int modifiers, unsigned int virtual_key) {
     }
   }
   return text;
+}
+
+bool RequiresMediaPipelineReconfigure(const AppConfig& current, const AppConfig& updated) {
+  return current.target_fps != updated.target_fps ||
+         current.output_width != updated.output_width ||
+         current.output_height != updated.output_height ||
+         current.scaling_mode != updated.scaling_mode ||
+         current.video_bitrate != updated.video_bitrate ||
+         current.audio_bitrate != updated.audio_bitrate ||
+         current.capture_cursor != updated.capture_cursor ||
+         current.target_mode != updated.target_mode ||
+         current.encoder_quality != updated.encoder_quality ||
+         current.static_overlay_enabled != updated.static_overlay_enabled ||
+         current.static_overlay_path != updated.static_overlay_path ||
+         current.live_overlay_enabled != updated.live_overlay_enabled ||
+         current.live_overlay_window_title != updated.live_overlay_window_title ||
+         current.static_overlay_x != updated.static_overlay_x ||
+         current.static_overlay_y != updated.static_overlay_y ||
+         current.static_overlay_width != updated.static_overlay_width ||
+         current.static_overlay_height != updated.static_overlay_height ||
+         current.static_overlay_opacity != updated.static_overlay_opacity ||
+         current.preferred_game_title != updated.preferred_game_title ||
+         current.preferred_display_name != updated.preferred_display_name ||
+         current.encoder_preferences != updated.encoder_preferences ||
+         current.clip_duration_seconds != updated.clip_duration_seconds ||
+         current.rolling_buffer_seconds != updated.rolling_buffer_seconds ||
+         current.rolling_buffer_bytes != updated.rolling_buffer_bytes ||
+         current.output_directory != updated.output_directory ||
+         current.recording_directory != updated.recording_directory ||
+         current.raw_frame_queue_capacity != updated.raw_frame_queue_capacity ||
+         current.encode_queue_capacity != updated.encode_queue_capacity ||
+         current.recording_packet_queue_capacity != updated.recording_packet_queue_capacity;
 }
 
 }  // namespace klip

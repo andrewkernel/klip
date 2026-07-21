@@ -12,7 +12,6 @@ namespace klip {
 namespace {
 
 constexpr ImVec4 kMuted{0.48F, 0.49F, 0.46F, 1.0F};
-constexpr ImVec4 kLavender{0.70F, 0.46F, 0.98F, 1.0F};
 constexpr ImVec4 kMint{0.30F, 0.80F, 0.49F, 1.0F};
 constexpr ImVec4 kCoral{1.0F, 0.38F, 0.43F, 1.0F};
 constexpr ImU32 kBackgroundTop = IM_COL32(9, 11, 10, 255);
@@ -314,6 +313,11 @@ void ApplyPerformanceMode(AppConfig& config, bool enabled) {
   config.output_height = enabled ? 720U : 1080U;
   config.video_bitrate = enabled ? 8'000'000 : 12'000'000;
   config.encoder_quality = enabled ? EncoderQuality::kPerformance : EncoderQuality::kBalanced;
+  if (enabled) {
+    config.capture_preview_enabled = false;
+    config.static_overlay_enabled = false;
+    config.live_overlay_enabled = false;
+  }
   SetEncoderProfile(config, 0);
   ResizeReplayBudget(config);
 }
@@ -322,6 +326,7 @@ bool IsPerformanceMode(const AppConfig& config) {
   return config.target_fps == 60 && config.output_width == 1280 &&
          config.output_height == 720 && config.video_bitrate == 8'000'000 &&
          config.encoder_quality == EncoderQuality::kPerformance &&
+         !config.static_overlay_enabled && !config.live_overlay_enabled &&
          EncoderProfile(config.encoder_preferences) == 0;
 }
 
@@ -385,25 +390,101 @@ bool SameChord(unsigned int modifiers_a, unsigned int key_a, unsigned int modifi
 }  // namespace
 
 void MainPanel::Render(const ApplicationSnapshot& snapshot, const AppConfig& config,
-                       const UiCommands& commands, bool hotkeys_available) {
+                       const UiCommands& commands, bool hotkeys_available,
+                       const CapturePreviewView& preview) {
   constexpr ImVec2 size{1260.0F, 800.0F};
   auto* viewport = ImGui::GetMainViewport();
   ImGui::SetNextWindowSize(size, ImGuiCond_Always);
   ImGui::SetNextWindowPos({viewport->WorkPos.x + (viewport->WorkSize.x - size.x) * 0.5F,
                            viewport->WorkPos.y + (viewport->WorkSize.y - size.y) * 0.5F},
                           ImGuiCond_Always);
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
-                      settings_open_ ? ImVec2{30.0F, 24.0F} : ImVec2{0.0F, 0.0F});
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{0.0F, 0.0F});
   ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                                  ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar;
-  if (!settings_open_)
-    window_flags |= ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+                                  ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar |
+                                  ImGuiWindowFlags_NoScrollbar |
+                                  ImGuiWindowFlags_NoScrollWithMouse;
   ImGui::Begin("Klip", nullptr, window_flags);
 
-  if (settings_open_)
-    RenderSettings(snapshot, config, commands);
-  else
-    RenderDashboard(snapshot, config, commands, hotkeys_available);
+  RenderDashboard(snapshot, config, commands, hotkeys_available);
+  if (settings_open_) RenderSettings(snapshot, config, commands);
+  ImGui::End();
+  ImGui::PopStyleVar();
+  if (config.capture_preview_enabled) RenderCapturePreview(preview, config);
+}
+
+void MainPanel::RenderCapturePreview(const CapturePreviewView& preview,
+                                     const AppConfig& config) {
+  auto* viewport = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos({viewport->WorkPos.x + viewport->WorkSize.x - 430.0F,
+                           viewport->WorkPos.y + 82.0F},
+                          ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSize({410.0F, 285.0F}, ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowBgAlpha(0.97F);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {12.0F, 12.0F});
+  if (ImGui::Begin("capture preview###klip-capture-preview", nullptr,
+                   ImGuiWindowFlags_NoSavedSettings)) {
+    ImGui::TextColored(kMuted, "preview / 15 fps / display only");
+    const auto available = ImGui::GetContentRegionAvail();
+    const float source_aspect = preview.width > 0 && preview.height > 0
+                                    ? static_cast<float>(preview.width) / preview.height
+                                    : 16.0F / 9.0F;
+    const float output_aspect = config.output_width > 0 && config.output_height > 0
+                                    ? static_cast<float>(config.output_width) /
+                                          config.output_height
+                                    : source_aspect;
+    ImVec2 canvas_size{available.x, available.x / output_aspect};
+    if (canvas_size.y > available.y) {
+      canvas_size.y = available.y;
+      canvas_size.x = canvas_size.y * output_aspect;
+    }
+    if (preview.texture != nullptr && canvas_size.x > 1.0F && canvas_size.y > 1.0F) {
+      const auto cursor = ImGui::GetCursorScreenPos();
+      const ImVec2 canvas_min{cursor.x + (available.x - canvas_size.x) * 0.5F, cursor.y};
+      const ImVec2 canvas_max{canvas_min.x + canvas_size.x, canvas_min.y + canvas_size.y};
+      auto* draw = ImGui::GetWindowDrawList();
+      draw->AddRectFilled(canvas_min, canvas_max, IM_COL32(2, 3, 7, 255), 5.0F);
+
+      ImVec2 capture_min = canvas_min;
+      ImVec2 capture_max = canvas_max;
+      if (config.scaling_mode == VideoScalingMode::kFit && source_aspect > 0.0F) {
+        if (source_aspect > output_aspect) {
+          const float height = canvas_size.x / source_aspect;
+          const float inset = (canvas_size.y - height) * 0.5F;
+          capture_min.y += inset;
+          capture_max.y -= inset;
+        } else if (source_aspect < output_aspect) {
+          const float width = canvas_size.y * source_aspect;
+          const float inset = (canvas_size.x - width) * 0.5F;
+          capture_min.x += inset;
+          capture_max.x -= inset;
+        }
+      }
+      const auto texture_id =
+          static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(preview.texture));
+      draw->AddImage(ImTextureRef(texture_id), capture_min, capture_max);
+
+      if ((config.static_overlay_enabled || config.live_overlay_enabled) &&
+          preview.overlay_texture != nullptr) {
+        const ImVec2 overlay_min{
+            canvas_min.x + canvas_size.x * static_cast<float>(config.static_overlay_x),
+            canvas_min.y + canvas_size.y * static_cast<float>(config.static_overlay_y)};
+        const ImVec2 overlay_max{
+            overlay_min.x + canvas_size.x * static_cast<float>(config.static_overlay_width),
+            overlay_min.y + canvas_size.y * static_cast<float>(config.static_overlay_height)};
+        const auto overlay_id = static_cast<ImTextureID>(
+            reinterpret_cast<std::uintptr_t>(preview.overlay_texture));
+        const auto alpha = static_cast<int>(
+            std::clamp(config.static_overlay_opacity, 0.0, 1.0) * 255.0 + 0.5);
+        draw->AddImage(ImTextureRef(overlay_id), overlay_min, overlay_max, {0.0F, 0.0F},
+                       {1.0F, 1.0F}, IM_COL32(255, 255, 255, alpha));
+      }
+      draw->AddRect(canvas_min, canvas_max, IM_COL32(78, 71, 91, 255), 5.0F);
+      ImGui::Dummy({available.x, canvas_size.y});
+    } else {
+      ImGui::Dummy({1.0F, 70.0F});
+      ImGui::TextColored(kMuted, "waiting for the selected capture source...");
+    }
+  }
   ImGui::End();
   ImGui::PopStyleVar();
 }
@@ -542,6 +623,14 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
                 kDivider, 1.0F);
   DrawText(draw, label_font, 11.0F, {content.x, section_line_y + 25.0F}, kMutedU32,
            "capture source / choose one");
+  bool show_capture_preview = config.capture_preview_enabled;
+  ImGui::SetCursorScreenPos({content.x + content_width - 390.0F, section_line_y + 17.0F});
+  if (ImGui::Checkbox("live preview", &show_capture_preview) &&
+      commands.set_capture_preview_enabled) {
+    commands.set_capture_preview_enabled(show_capture_preview);
+  }
+  if (ImGui::IsItemHovered())
+    ImGui::SetTooltip("15 fps dashboard preview. The recording path stays at full quality.");
   bool show_capture_highlight = config.capture_border;
   ImGui::SetCursorScreenPos({content.x + content_width - 224.0F, section_line_y + 17.0F});
   if (ImGui::Checkbox("show capture highlight", &show_capture_highlight) &&
@@ -687,9 +776,13 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
     draw->AddRectFilled({meter_x + segment * 7.0F, audio_row_y + 22.0F},
                         {meter_x + segment * 7.0F + 4.0F, audio_row_y + 30.0F}, meter_color);
   }
-  DrawText(draw, semibold, 13.0F, {content.x + content_width - 59.0F, audio_row_y + 18.0F},
-           snapshot.desktop_audio_active ? kGreen : kMutedU32,
-           snapshot.desktop_audio_active ? "live" : "quiet");
+  bool desktop_enabled = config.desktop_audio_enabled;
+  if (Switch("##desktop-audio-toggle",
+             {content.x + content_width - 70.0F, audio_row_y + 13.0F}, desktop_enabled) &&
+      commands.set_desktop_audio_enabled) {
+    desktop_enabled = !desktop_enabled;
+    commands.set_desktop_audio_enabled(desktop_enabled);
+  }
 
   const float microphone_y = audio_row_y + audio_row_height + audio_row_gap;
   DrawCard(draw, {content.x, microphone_y}, audio_row_size, false, kPanel, kPanelBorder, 7.0F);
@@ -853,17 +946,18 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
   const float footer_y = window_max.y - 53.0F;
   draw->AddLine({window_min.x + 1.0F, footer_y}, {window_max.x - 1.0F, footer_y}, kDivider,
                 1.0F);
-  const ImVec2 settings_pos{content.x - 10.0F, footer_y + 9.0F};
+  const ImVec2 settings_pos{content.x - 4.0F, footer_y + 8.0F};
+  const ImVec2 settings_size{156.0F, 37.0F};
   ImGui::SetCursorScreenPos(settings_pos);
-  ImGui::InvisibleButton("##settings-footer", {118.0F, 34.0F});
+  ImGui::InvisibleButton("##settings-footer", settings_size);
   const bool settings_clicked = ImGui::IsItemClicked();
   const bool settings_hovered = ImGui::IsItemHovered();
-  if (settings_hovered)
-    draw->AddRectFilled(settings_pos, {settings_pos.x + 118.0F, settings_pos.y + 34.0F},
-                        IM_COL32(255, 255, 255, 7), 7.0F);
+  DrawCard(draw, settings_pos, settings_size, settings_hovered,
+           settings_hovered ? IM_COL32(52, 31, 77, 255) : IM_COL32(29, 22, 39, 255),
+           IM_COL32(164, 93, 235, 235), 8.0F);
   const ImVec2 gear_center{settings_pos.x + 18.0F, settings_pos.y + 17.0F};
-  draw->AddCircle(gear_center, 7.0F, kMutedU32, 16, 2.0F);
-  draw->AddCircle(gear_center, 2.5F, kMutedU32, 12, 1.5F);
+  draw->AddCircle(gear_center, 7.0F, kPurpleBright, 16, 2.0F);
+  draw->AddCircle(gear_center, 2.5F, kPurpleBright, 12, 1.5F);
   for (int spoke = 0; spoke < 4; ++spoke) {
     const float horizontal = spoke % 2 == 0 ? 1.0F : 0.0F;
     const float vertical = spoke % 2 == 0 ? 0.0F : 1.0F;
@@ -872,15 +966,16 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
                    gear_center.y + vertical * direction * 7.0F},
                   {gear_center.x + horizontal * direction * 10.0F,
                    gear_center.y + vertical * direction * 10.0F},
-                  kMutedU32, 2.0F);
+                  kPurpleBright, 2.0F);
   }
-  DrawText(draw, regular, 13.0F, {settings_pos.x + 38.0F, settings_pos.y + 9.0F},
-           kMutedU32, "settings");
+  DrawText(draw, semibold, 13.0F, {settings_pos.x + 38.0F, settings_pos.y + 10.0F},
+           kTextU32, "settings");
   if (settings_clicked) {
     ResetDraft(config);
     settings_open_ = true;
+    ImGui::OpenPopup("settings###klip-settings-modal");
   }
-  constexpr std::string_view version = "v3.0.1";
+  constexpr std::string_view version = "v3.0.2";
   DrawText(draw, label_font, 10.0F,
            {content.x + content_width - TextWidth(label_font, 10.0F, version), footer_y + 21.0F},
            kMutedU32, version);
@@ -889,13 +984,32 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
 void MainPanel::RenderSettings(const ApplicationSnapshot& snapshot, const AppConfig& config,
                                const UiCommands& commands) {
   if (!draft_initialized_) ResetDraft(config);
-  ImGui::TextColored(kLavender, "Klip");
-  ImGui::SameLine();
-  ImGui::TextColored(kMuted, " / settings");
-  ImGui::SameLine(ImGui::GetWindowWidth() - 72.0F);
-  if (ImGui::SmallButton("back")) settings_open_ = false;
+  auto* viewport = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Appearing, {0.5F, 0.5F});
+  ImGui::SetNextWindowSize({900.0F, 700.0F}, ImGuiCond_Appearing);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {26.0F, 22.0F});
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0F);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0F);
+  ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, ImVec4{0.01F, 0.01F, 0.02F, 0.76F});
+  ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4{0.047F, 0.047F, 0.059F, 1.0F});
+  bool popup_open = true;
+  if (!ImGui::BeginPopupModal("settings###klip-settings-modal", &popup_open,
+                              ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
+                                  ImGuiWindowFlags_NoTitleBar)) {
+    if (!ImGui::IsPopupOpen("settings###klip-settings-modal")) settings_open_ = false;
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(3);
+    return;
+  }
+
+  ImGui::PushFont(UiFont(2));
+  ImGui::TextUnformatted("settings");
+  ImGui::PopFont();
   ImGui::TextColored(kMuted,
-                     "hardware-first defaults keep capture light. shortcuts apply immediately.");
+                     "save once. Klip applies changes here without restarting the app.");
+  ImGui::Separator();
+  ImGui::BeginChild("##settings-scroll", {0.0F, -94.0F}, false,
+                    ImGuiWindowFlags_AlwaysVerticalScrollbar);
 
   SectionLabel("performance / preset");
   bool performance_mode = IsPerformanceMode(draft_);
@@ -918,6 +1032,11 @@ void MainPanel::RenderSettings(const ApplicationSnapshot& snapshot, const AppCon
     draft_.output_width = resolution == 1 ? 1920U : resolution == 2 ? 1280U : 0U;
     draft_.output_height = resolution == 1 ? 1080U : resolution == 2 ? 720U : 0U;
   }
+  int scaling = draft_.scaling_mode == VideoScalingMode::kFit ? 0 : 1;
+  constexpr const char* scaling_modes[] = {"fit / preserve aspect ratio",
+                                            "stretch / fill output"};
+  if (ImGui::Combo("scaling", &scaling, scaling_modes, IM_ARRAYSIZE(scaling_modes)))
+    draft_.scaling_mode = scaling == 0 ? VideoScalingMode::kFit : VideoScalingMode::kStretch;
 
   int bitrate_mbps = static_cast<int>(draft_.video_bitrate / 1'000'000);
   if (ImGui::SliderInt("video bitrate", &bitrate_mbps, 4, 40, "%d Mbps")) {
@@ -935,8 +1054,76 @@ void MainPanel::RenderSettings(const ApplicationSnapshot& snapshot, const AppCon
     draft_.encoder_quality = static_cast<EncoderQuality>(quality);
   ImGui::Checkbox("capture mouse cursor", &draft_.capture_cursor);
   ImGui::Checkbox("show Windows capture highlight", &draft_.capture_border);
+  if (ImGui::Checkbox("show low-rate capture preview", &draft_.capture_preview_enabled) &&
+      draft_.capture_preview_enabled)
+    draft_.capture_border = false;
+  ImGui::TextColored(kMuted,
+                     "preview refreshes at 15 fps and does not change recorded frame rate.");
+
+  SectionLabel("studio / map cover or handcam");
+  if (ImGui::Checkbox("static image overlay", &draft_.static_overlay_enabled) &&
+      draft_.static_overlay_enabled)
+    draft_.live_overlay_enabled = false;
+  ImGui::BeginDisabled(!draft_.static_overlay_enabled);
+  ImGui::InputText("image file", overlay_path_.data(), overlay_path_.size());
+  ImGui::EndDisabled();
+
+  if (ImGui::Checkbox("live window overlay / handcam", &draft_.live_overlay_enabled) &&
+      draft_.live_overlay_enabled) {
+    draft_.static_overlay_enabled = false;
+    if (draft_.live_overlay_window_title.empty()) {
+      const auto first = std::find_if(snapshot.game_sources.begin(), snapshot.game_sources.end(),
+                                      [&](const auto& source) {
+                                        return source.id != snapshot.selected_capture_source_id;
+                                      });
+      if (first != snapshot.game_sources.end())
+        draft_.live_overlay_window_title = first->label;
+    }
+  }
+  const char* live_overlay_label = draft_.live_overlay_window_title.empty()
+                                       ? "open Camera or another preview window first"
+                                       : draft_.live_overlay_window_title.c_str();
+  ImGui::BeginDisabled(!draft_.live_overlay_enabled);
+  if (ImGui::BeginCombo("handcam window", live_overlay_label)) {
+    for (const auto& source : snapshot.game_sources) {
+      if (source.id == snapshot.selected_capture_source_id) continue;
+      const bool selected = source.label == draft_.live_overlay_window_title;
+      if (ImGui::Selectable(source.label.c_str(), selected))
+        draft_.live_overlay_window_title = source.label;
+    }
+    ImGui::EndCombo();
+  }
+  ImGui::EndDisabled();
+
+  const bool overlay_enabled = draft_.static_overlay_enabled || draft_.live_overlay_enabled;
+  ImGui::BeginDisabled(!overlay_enabled);
+  int overlay_x = static_cast<int>(draft_.static_overlay_x * 100.0 + 0.5);
+  int overlay_y = static_cast<int>(draft_.static_overlay_y * 100.0 + 0.5);
+  int overlay_width = static_cast<int>(draft_.static_overlay_width * 100.0 + 0.5);
+  int overlay_height = static_cast<int>(draft_.static_overlay_height * 100.0 + 0.5);
+  int overlay_opacity = static_cast<int>(draft_.static_overlay_opacity * 100.0 + 0.5);
+  bool overlay_changed = false;
+  overlay_changed |= ImGui::SliderInt("left", &overlay_x, 0, 99, "%d%%");
+  overlay_changed |= ImGui::SliderInt("top", &overlay_y, 0, 99, "%d%%");
+  overlay_changed |= ImGui::SliderInt("width", &overlay_width, 1, 100, "%d%%");
+  overlay_changed |= ImGui::SliderInt("height", &overlay_height, 1, 100, "%d%%");
+  overlay_changed |= ImGui::SliderInt("opacity", &overlay_opacity, 0, 100, "%d%%");
+  if (overlay_changed) {
+    overlay_x = std::min(overlay_x, 100 - overlay_width);
+    overlay_y = std::min(overlay_y, 100 - overlay_height);
+    draft_.static_overlay_x = static_cast<double>(overlay_x) / 100.0;
+    draft_.static_overlay_y = static_cast<double>(overlay_y) / 100.0;
+    draft_.static_overlay_width = static_cast<double>(overlay_width) / 100.0;
+    draft_.static_overlay_height = static_cast<double>(overlay_height) / 100.0;
+    draft_.static_overlay_opacity = static_cast<double>(overlay_opacity) / 100.0;
+  }
+  ImGui::EndDisabled();
+  ImGui::TextColored(kMuted,
+                     "Open Windows Camera for a webcam source. One overlay is composed in the "
+                     "existing GPU pass and applies when you save.");
 
   SectionLabel("clips / audio");
+  ImGui::Checkbox("record desktop audio", &draft_.desktop_audio_enabled);
   int clip_seconds = static_cast<int>(draft_.clip_duration_seconds);
   if (ImGui::SliderInt("replay length", &clip_seconds, 15, 300, "%d seconds")) {
     draft_.clip_duration_seconds = static_cast<double>(clip_seconds);
@@ -950,6 +1137,24 @@ void MainPanel::RenderSettings(const ApplicationSnapshot& snapshot, const AppCon
   int desktop_volume = static_cast<int>(draft_.desktop_audio_gain * 100.0 + 0.5);
   if (ImGui::SliderInt("desktop volume", &desktop_volume, 0, 200, "%d%%"))
     draft_.desktop_audio_gain = static_cast<double>(desktop_volume) / 100.0;
+  const std::string excluded_label = draft_.excluded_audio_process.empty()
+                                         ? "record every application"
+                                         : "mute " + draft_.excluded_audio_process;
+  if (ImGui::BeginCombo("application audio", excluded_label.c_str())) {
+    const bool all_selected = draft_.excluded_audio_process.empty();
+    if (ImGui::Selectable("record every application", all_selected))
+      draft_.excluded_audio_process.clear();
+    for (const auto& application : snapshot.audio_applications) {
+      const bool selected = _stricmp(draft_.excluded_audio_process.c_str(),
+                                     application.name.c_str()) == 0;
+      const auto label = "mute " + application.name;
+      if (ImGui::Selectable(label.c_str(), selected))
+        draft_.excluded_audio_process = application.name;
+    }
+    ImGui::EndCombo();
+  }
+  ImGui::TextColored(kMuted,
+                     "low-overhead process-tree exclusion; it does not mute playback for you.");
   int microphone_volume = static_cast<int>(draft_.microphone_audio_gain * 100.0 + 0.5);
   if (ImGui::SliderInt("microphone volume", &microphone_volume, 0, 200, "%d%%"))
     draft_.microphone_audio_gain = static_cast<double>(microphone_volume) / 100.0;
@@ -1018,7 +1223,7 @@ void MainPanel::RenderSettings(const ApplicationSnapshot& snapshot, const AppCon
       }
       *shortcut_modifiers[hotkey_capture_target_] = modifiers;
       *shortcut_keys[hotkey_capture_target_] = *virtual_key;
-      hotkey_capture_message_ = "shortcut ready / save settings to apply";
+      hotkey_capture_message_ = "shortcut ready / save & apply when finished";
       hotkey_capture_target_ = -1;
       break;
     }
@@ -1034,27 +1239,62 @@ void MainPanel::RenderSettings(const ApplicationSnapshot& snapshot, const AppCon
                      "replay RAM is capped at %.0f MiB. encoded packets are shared, not duplicated.",
                      static_cast<double>(draft_.rolling_buffer_bytes) / (1024.0 * 1024.0));
 
-  SectionLabel("save / apply");
-  if (ImGui::Button("save settings", {-1.0F, 42.0F}) && commands.save_settings) {
+  ImGui::EndChild();
+  ImGui::Separator();
+
+  const bool busy = snapshot.recording || snapshot.finalizing_recording ||
+                    snapshot.status == CaptureStatus::kSaving;
+  if (!snapshot.settings_message.empty()) {
+    ImGui::TextColored(snapshot.last_error.has_value() ? kCoral : kMint, "%s",
+                       snapshot.settings_message.c_str());
+  } else {
+    ImGui::TextColored(kMuted, busy ? "finish the current recording before applying changes"
+                                    : "changes apply immediately; capture may refresh briefly");
+  }
+
+  const float buttons_width = 342.0F;
+  ImGui::SameLine(ImGui::GetWindowWidth() - buttons_width - 26.0F);
+  if (ImGui::Button("cancel", {112.0F, 46.0F})) {
+    ResetDraft(config);
+    settings_open_ = false;
+    ImGui::CloseCurrentPopup();
+  }
+  ImGui::SameLine();
+  ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.46F, 0.18F, 0.82F, 1.0F});
+  ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{0.57F, 0.25F, 0.95F, 1.0F});
+  ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{0.39F, 0.13F, 0.72F, 1.0F});
+  ImGui::BeginDisabled(busy);
+  if (ImGui::Button("save & apply", {214.0F, 46.0F}) && commands.save_settings) {
     draft_.output_directory = ParsePath(clips_path_.data());
     draft_.recording_directory = ParsePath(recordings_path_.data());
-    commands.save_settings(draft_);
-    hotkey_capture_message_.clear();
+    draft_.static_overlay_path = ParsePath(overlay_path_.data());
+    if (commands.save_settings(draft_)) {
+      hotkey_capture_message_.clear();
+      settings_open_ = false;
+      ImGui::CloseCurrentPopup();
+    }
   }
-  if (!snapshot.settings_message.empty())
-    ImGui::TextColored(snapshot.settings_restart_required ? ImVec4{1.0F, 0.73F, 0.25F, 1.0F}
-                                                         : kMint,
-                       "%s", snapshot.settings_message.c_str());
-  ImGui::TextWrapped("capture mode, source selection, and audio volume apply immediately. video, "
-                     "encoder, buffer, and storage changes apply after restarting Klip.");
+  ImGui::EndDisabled();
+  ImGui::PopStyleColor(3);
+
+  if (!popup_open) settings_open_ = false;
+  ImGui::EndPopup();
+  ImGui::PopStyleColor(2);
+  ImGui::PopStyleVar(3);
 }
 
 void MainPanel::ResetDraft(const AppConfig& config) {
   draft_ = config;
+  if (draft_.target_fps != 30 && draft_.target_fps != 60) {
+    draft_.target_fps = 60;
+    ResizeReplayBudget(draft_);
+  }
   const auto clips = PathText(config.output_directory);
   const auto recordings = PathText(config.recording_directory);
+  const auto overlay = PathText(config.static_overlay_path);
   std::snprintf(clips_path_.data(), clips_path_.size(), "%s", clips.c_str());
   std::snprintf(recordings_path_.data(), recordings_path_.size(), "%s", recordings.c_str());
+  std::snprintf(overlay_path_.data(), overlay_path_.size(), "%s", overlay.c_str());
   draft_initialized_ = true;
   hotkey_capture_target_ = -1;
   hotkey_capture_message_.clear();

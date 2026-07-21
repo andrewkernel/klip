@@ -1,6 +1,7 @@
 #include "klip/audio/audio_pipeline.h"
 
 #include <functiondiscoverykeys_devpkey.h>
+#include <audiopolicy.h>
 #include <ksmedia.h>
 #include <propkey.h>
 #include <propsys.h>
@@ -23,6 +24,115 @@ namespace klip {
 namespace {
 
 constexpr int kMaximumBufferedFrames = AudioEncoder::kSampleRate;
+constexpr wchar_t kProcessLoopbackDevice[] = L"VAD\\Process_Loopback";
+
+enum class ProcessLoopbackMode : int { kInclude = 0, kExclude = 1 };
+struct ProcessLoopbackParameters {
+  DWORD target_process_id = 0;
+  ProcessLoopbackMode mode = ProcessLoopbackMode::kExclude;
+};
+struct AudioActivationParameters {
+  int activation_type = 1;  // AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK
+  ProcessLoopbackParameters process_loopback;
+};
+
+class AudioActivationHandler final : public IActivateAudioInterfaceCompletionHandler {
+ public:
+  AudioActivationHandler() : completed_(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {}
+  ~AudioActivationHandler() {
+    if (client_ != nullptr) client_->Release();
+  }
+
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void** output) override {
+    if (output == nullptr) return E_POINTER;
+    *output = nullptr;
+    if (IsEqualIID(id, IID_IUnknown) || IsEqualIID(id, IID_IAgileObject) ||
+        IsEqualIID(id, __uuidof(IActivateAudioInterfaceCompletionHandler))) {
+      *output = static_cast<IActivateAudioInterfaceCompletionHandler*>(this);
+      AddRef();
+      return S_OK;
+    }
+    return E_NOINTERFACE;
+  }
+  ULONG STDMETHODCALLTYPE AddRef() override { return ++references_; }
+  ULONG STDMETHODCALLTYPE Release() override {
+    const auto remaining = --references_;
+    if (remaining == 0) delete this;
+    return remaining;
+  }
+  HRESULT STDMETHODCALLTYPE ActivateCompleted(
+      IActivateAudioInterfaceAsyncOperation* operation) override {
+    IUnknown* activated = nullptr;
+    result_ = operation->GetActivateResult(&activation_result_, &activated);
+    if (SUCCEEDED(result_) && SUCCEEDED(activation_result_) && activated != nullptr) {
+      result_ = activated->QueryInterface(__uuidof(IAudioClient),
+                                          reinterpret_cast<void**>(&client_));
+    } else if (SUCCEEDED(result_)) {
+      result_ = activation_result_;
+    }
+    if (activated != nullptr) activated->Release();
+    SetEvent(completed_.Get());
+    return S_OK;
+  }
+
+  HRESULT Wait(winrt::com_ptr<IAudioClient>& client) {
+    if (!completed_ || WaitForSingleObject(completed_.Get(), 5000) != WAIT_OBJECT_0)
+      return HRESULT_FROM_WIN32(ERROR_TIMEOUT);
+    if (FAILED(result_)) return result_;
+    client.attach(client_);
+    client_ = nullptr;
+    return S_OK;
+  }
+
+ private:
+  std::atomic<ULONG> references_{1};
+  ScopedHandle completed_;
+  HRESULT result_ = E_PENDING;
+  HRESULT activation_result_ = E_PENDING;
+  IAudioClient* client_ = nullptr;
+};
+
+HRESULT ActivateProcessLoopback(DWORD process_id, winrt::com_ptr<IAudioClient>& client) {
+  AudioActivationParameters parameters{};
+  parameters.process_loopback.target_process_id = process_id;
+  parameters.process_loopback.mode = ProcessLoopbackMode::kExclude;
+  PROPVARIANT activation{};
+  activation.vt = VT_BLOB;
+  activation.blob.cbSize = sizeof(parameters);
+  activation.blob.pBlobData = reinterpret_cast<BYTE*>(&parameters);
+
+  auto* handler = new AudioActivationHandler();
+  winrt::com_ptr<IActivateAudioInterfaceAsyncOperation> operation;
+  const auto started = ActivateAudioInterfaceAsync(
+      kProcessLoopbackDevice, __uuidof(IAudioClient), &activation, handler, operation.put());
+  if (FAILED(started)) {
+    handler->Release();
+    return started;
+  }
+  const auto result = handler->Wait(client);
+  handler->Release();
+  return result;
+}
+
+std::string ProcessName(DWORD process_id) {
+  ScopedHandle process(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process_id));
+  if (!process) return {};
+  std::wstring path(32768, L'\0');
+  DWORD size = static_cast<DWORD>(path.size());
+  if (!QueryFullProcessImageNameW(process.Get(), 0, path.data(), &size)) return {};
+  path.resize(size);
+  const auto separator = path.find_last_of(L"\\/");
+  const auto filename = separator == std::wstring::npos ? path : path.substr(separator + 1);
+  if (filename.empty()) return {};
+  const auto required =
+      WideCharToMultiByte(CP_UTF8, 0, filename.c_str(), -1, nullptr, 0, nullptr, nullptr);
+  if (required <= 0) return {};
+  std::string output(static_cast<std::size_t>(required), '\0');
+  WideCharToMultiByte(CP_UTF8, 0, filename.c_str(), -1, output.data(), required, nullptr,
+                      nullptr);
+  output.pop_back();
+  return output;
+}
 
 }  // namespace
 
@@ -36,6 +146,7 @@ bool AudioPipeline::Initialize(std::int64_t qpc_origin, std::int64_t qpc_frequen
   Shutdown();
   config_ = config;
   microphone_running_.store(false, std::memory_order_release);
+  desktop_enabled_.store(config.desktop_audio_enabled, std::memory_order_release);
   desktop_gain_.store(static_cast<float>(std::clamp(config.desktop_audio_gain, 0.0, 2.0)),
                       std::memory_order_release);
   microphone_gain_.store(static_cast<float>(std::clamp(config.microphone_audio_gain, 0.0, 2.0)),
@@ -49,6 +160,9 @@ bool AudioPipeline::Initialize(std::int64_t qpc_origin, std::int64_t qpc_frequen
     return false;
   }
   EnumerateMicrophones(error);  // Desktop audio remains usable without a mic.
+  Error applications_error;
+  if (!EnumerateAudioApplications(applications_error))
+    logger_.Warning(applications_error.ToString());
   if (!encoder_.Initialize(config.audio_bitrate, error)) return false;
   running_.store(true, std::memory_order_release);
   if (!StartDesktop(error)) {
@@ -66,6 +180,8 @@ bool AudioPipeline::Initialize(std::int64_t qpc_origin, std::int64_t qpc_frequen
   }
   state_.SetMicrophoneEnabled(microphone_running_.load(std::memory_order_acquire));
   mixer_thread_ = std::jthread([this](std::stop_token token) { MixerLoop(token); });
+  application_audio_thread_ =
+      std::jthread([this](std::stop_token token) { ApplicationAudioLoop(token); });
   logger_.Info("WASAPI audio pipeline started");
   return true;
 }
@@ -81,8 +197,10 @@ void AudioPipeline::StopCapture() noexcept {
   running_.store(false, std::memory_order_release);
   microphone_running_.store(false, std::memory_order_release);
   mixer_thread_.request_stop();
+  application_audio_thread_.request_stop();
   sample_generation_.fetch_add(1, std::memory_order_release);
   mixer_cv_.notify_all();
+  application_audio_thread_ = {};
   StopContext(desktop_);
   StopContext(microphone_);
   mixer_thread_ = {};
@@ -126,6 +244,41 @@ void AudioPipeline::SetMicrophoneEnabled(bool enabled) {
 
 void AudioPipeline::SetDesktopGain(float gain) noexcept {
   desktop_gain_.store(std::clamp(gain, 0.0F, 2.0F), std::memory_order_release);
+}
+
+void AudioPipeline::SetDesktopEnabled(bool enabled) noexcept {
+  desktop_enabled_.store(enabled, std::memory_order_release);
+  config_.desktop_audio_enabled = enabled;
+  logger_.Info(enabled ? "Desktop audio enabled" : "Desktop audio muted");
+}
+
+void AudioPipeline::SetExcludedApplication(std::string executable_name) {
+  std::scoped_lock lock(control_mutex_);
+  if (config_.excluded_audio_process == executable_name) return;
+  config_.excluded_audio_process = std::move(executable_name);
+  if (!running_.load(std::memory_order_acquire)) return;
+  StopContext(desktop_);
+  {
+    std::scoped_lock buffer_lock(desktop_buffer_.mutex);
+    desktop_buffer_.samples.clear();
+    desktop_buffer_.read_pts = AV_NOPTS_VALUE;
+  }
+  Error error;
+  Error applications_error;
+  if (!EnumerateAudioApplications(applications_error))
+    logger_.Warning(applications_error.ToString());
+  if (!StartDesktop(error)) {
+    state_.SetError(error);
+    logger_.ErrorMessage(error);
+  } else {
+    if (config_.excluded_audio_process.empty()) {
+      logger_.Info("Desktop audio records every application");
+    } else if (excluded_process_active_.load(std::memory_order_acquire)) {
+      logger_.Info("Desktop audio exclusion active: " + config_.excluded_audio_process);
+    } else {
+      logger_.Warning("Desktop audio exclusion is unavailable; recording complete desktop audio");
+    }
+  }
 }
 
 void AudioPipeline::SetMicrophoneGain(float gain) noexcept {
@@ -195,23 +348,108 @@ bool AudioPipeline::EnumerateMicrophones(Error& error) {
   return true;
 }
 
+bool AudioPipeline::EnumerateAudioApplications(Error& error) {
+  audio_applications_.clear();
+  winrt::com_ptr<IMMDevice> device;
+  auto result = enumerator_->GetDefaultAudioEndpoint(eRender, eMultimedia, device.put());
+  if (FAILED(result)) result = enumerator_->GetDefaultAudioEndpoint(eRender, eConsole, device.put());
+  if (FAILED(result)) {
+    error = MakeHresultError(ErrorComponent::kAudio, "open render endpoint sessions", result);
+    return false;
+  }
+  winrt::com_ptr<IAudioSessionManager2> manager;
+  result = device->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr,
+                            manager.put_void());
+  if (FAILED(result)) {
+    error = MakeHresultError(ErrorComponent::kAudio, "open audio session manager", result);
+    return false;
+  }
+  winrt::com_ptr<IAudioSessionEnumerator> sessions;
+  result = manager->GetSessionEnumerator(sessions.put());
+  if (FAILED(result)) {
+    error = MakeHresultError(ErrorComponent::kAudio, "enumerate application audio", result);
+    return false;
+  }
+  int count = 0;
+  sessions->GetCount(&count);
+  for (int index = 0; index < count; ++index) {
+    winrt::com_ptr<IAudioSessionControl> control;
+    if (FAILED(sessions->GetSession(index, control.put()))) continue;
+    winrt::com_ptr<IAudioSessionControl2> control2;
+    if (FAILED(control->QueryInterface(__uuidof(IAudioSessionControl2), control2.put_void())))
+      continue;
+    DWORD process_id = 0;
+    if (FAILED(control2->GetProcessId(&process_id)) || process_id == 0 ||
+        process_id == GetCurrentProcessId())
+      continue;
+    auto name = ProcessName(process_id);
+    if (name.empty()) continue;
+    const auto duplicate = std::find_if(audio_applications_.begin(), audio_applications_.end(),
+                                        [&](const auto& application) {
+                                          return _stricmp(application.name.c_str(), name.c_str()) ==
+                                                 0;
+                                        });
+    if (duplicate == audio_applications_.end())
+      audio_applications_.push_back({process_id, std::move(name)});
+  }
+  std::sort(audio_applications_.begin(), audio_applications_.end(),
+            [](const auto& left, const auto& right) { return left.name < right.name; });
+  state_.SetAudioApplications(audio_applications_);
+  return true;
+}
+
 bool AudioPipeline::OpenContext(CaptureContext& context, const std::wstring& device_id, DWORD flags,
-                                Error& error) {
+                                Error& error, DWORD excluded_process_id) {
   StopContext(context);
-  auto result = device_id.empty()
-                    ? enumerator_->GetDefaultAudioEndpoint(eRender, eConsole, context.device.put())
-                    : enumerator_->GetDevice(device_id.c_str(), context.device.put());
+  HRESULT result = S_OK;
+  if (excluded_process_id != 0) {
+    result = ActivateProcessLoopback(excluded_process_id, context.client);
+  } else {
+    result = device_id.empty()
+                 ? enumerator_->GetDefaultAudioEndpoint(eRender, eMultimedia,
+                                                        context.device.put())
+                 : enumerator_->GetDevice(device_id.c_str(), context.device.put());
+  }
+  // Some systems do not assign a separate multimedia endpoint. Fall back to the
+  // console role so loopback capture remains available instead of failing startup.
+  if (FAILED(result) && excluded_process_id == 0 && device_id.empty()) {
+    context.device = nullptr;
+    result = enumerator_->GetDefaultAudioEndpoint(eRender, eConsole, context.device.put());
+  }
   if (FAILED(result)) {
     error = MakeHresultError(ErrorComponent::kAudio, "open audio device", result);
     return false;
   }
-  result = context.device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
-                                    context.client.put_void());
+  if (excluded_process_id == 0)
+    result = context.device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
+                                      context.client.put_void());
   if (FAILED(result)) {
     error = MakeHresultError(ErrorComponent::kAudio, "activate IAudioClient", result);
     return false;
   }
-  result = context.client->GetMixFormat(&context.format);
+  if (excluded_process_id != 0) {
+    // The process-loopback virtual device does not reliably expose GetMixFormat. Microsoft's
+    // ApplicationLoopback sample supplies an explicit shared-mode format and asks WASAPI to
+    // convert. Use Klip's native mixer format so this path avoids an extra libswresample pass.
+    context.format = static_cast<WAVEFORMATEX*>(CoTaskMemAlloc(sizeof(WAVEFORMATEX)));
+    if (context.format == nullptr) {
+      error = Error{ErrorComponent::kAudio, "allocate process-loopback format",
+                    "CoTaskMemAlloc failed", {}, {}, {}};
+      StopContext(context);
+      return false;
+    }
+    *context.format = {};
+    context.format->wFormatTag = WAVE_FORMAT_IEEE_FLOAT;
+    context.format->nChannels = AudioEncoder::kChannels;
+    context.format->nSamplesPerSec = AudioEncoder::kSampleRate;
+    context.format->wBitsPerSample = 32;
+    context.format->nBlockAlign = static_cast<WORD>(
+        context.format->nChannels * context.format->wBitsPerSample / 8);
+    context.format->nAvgBytesPerSec =
+        context.format->nSamplesPerSec * context.format->nBlockAlign;
+  } else {
+    result = context.client->GetMixFormat(&context.format);
+  }
   if (FAILED(result) || SampleFormat(context.format) == AV_SAMPLE_FMT_NONE) {
     error = Error{ErrorComponent::kAudio, "inspect audio format",
                   "WASAPI mix format is unsupported", {}, {}, {}};
@@ -224,8 +462,11 @@ bool AudioPipeline::OpenContext(CaptureContext& context, const std::wstring& dev
     StopContext(context);
     return false;
   }
-  result = context.client->Initialize(AUDCLNT_SHAREMODE_SHARED,
-                                      flags | AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 0, 0,
+  DWORD initialize_flags = flags | AUDCLNT_STREAMFLAGS_EVENTCALLBACK;
+  if (excluded_process_id != 0)
+    initialize_flags |= AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM |
+                        AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
+  result = context.client->Initialize(AUDCLNT_SHAREMODE_SHARED, initialize_flags, 0, 0,
                                       context.format, nullptr);
   if (SUCCEEDED(result)) {
     result = context.client->SetEventHandle(context.ready_event.Get());
@@ -265,10 +506,80 @@ bool AudioPipeline::OpenContext(CaptureContext& context, const std::wstring& dev
 
 bool AudioPipeline::StartDesktop(Error& error) {
   desktop_.kind = SourceKind::kDesktop;
-  if (!OpenContext(desktop_, L"", AUDCLNT_STREAMFLAGS_LOOPBACK, error)) return false;
+  excluded_process_active_.store(false, std::memory_order_release);
+  DWORD excluded_process_id = 0;
+  if (!config_.excluded_audio_process.empty()) {
+    const auto match = std::find_if(audio_applications_.begin(), audio_applications_.end(),
+                                    [&](const auto& application) {
+                                      return _stricmp(application.name.c_str(),
+                                                     config_.excluded_audio_process.c_str()) == 0;
+                                    });
+    if (match != audio_applications_.end()) excluded_process_id = match->process_id;
+  }
+  excluded_process_candidate_id_.store(excluded_process_id, std::memory_order_release);
+  if (!OpenContext(desktop_, L"", AUDCLNT_STREAMFLAGS_LOOPBACK, error,
+                   excluded_process_id)) {
+    if (excluded_process_id == 0) return false;
+    logger_.Warning(error.ToString() + "; falling back to complete desktop audio");
+    if (!OpenContext(desktop_, L"", AUDCLNT_STREAMFLAGS_LOOPBACK, error)) return false;
+  } else if (excluded_process_id != 0) {
+    excluded_process_active_.store(true, std::memory_order_release);
+    logger_.Info("Process-loopback exclusion initialized for " +
+                 config_.excluded_audio_process);
+  }
   desktop_.thread = std::jthread(
       [this](std::stop_token token) { CaptureLoop(desktop_, desktop_buffer_, token); });
   return true;
+}
+
+void AudioPipeline::ApplicationAudioLoop(std::stop_token stop_token) noexcept {
+  const auto com_result = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+  try {
+    while (!stop_token.stop_requested() && running_.load(std::memory_order_acquire)) {
+      for (int tick = 0; tick < 20 && !stop_token.stop_requested(); ++tick)
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      if (stop_token.stop_requested() || !running_.load(std::memory_order_acquire)) break;
+
+      std::scoped_lock lock(control_mutex_);
+      Error applications_error;
+      if (!EnumerateAudioApplications(applications_error)) {
+        logger_.Warning(applications_error.ToString());
+        continue;
+      }
+      DWORD candidate = 0;
+      if (!config_.excluded_audio_process.empty()) {
+        const auto match = std::find_if(
+            audio_applications_.begin(), audio_applications_.end(), [&](const auto& application) {
+              return _stricmp(application.name.c_str(),
+                              config_.excluded_audio_process.c_str()) == 0;
+            });
+        if (match != audio_applications_.end()) candidate = match->process_id;
+      }
+      if (candidate == excluded_process_candidate_id_.load(std::memory_order_acquire)) continue;
+
+      StopContext(desktop_);
+      {
+        std::scoped_lock buffer_lock(desktop_buffer_.mutex);
+        desktop_buffer_.samples.clear();
+        desktop_buffer_.read_pts = AV_NOPTS_VALUE;
+      }
+      Error restart_error;
+      if (!StartDesktop(restart_error)) {
+        state_.SetError(restart_error);
+        logger_.ErrorMessage(restart_error);
+      } else if (candidate == 0) {
+        logger_.Info("Muted application is not active; recording complete desktop audio");
+      } else {
+        logger_.Info("Muted application session refreshed: " +
+                     config_.excluded_audio_process);
+      }
+    }
+  } catch (const std::exception& exception) {
+    logger_.Warning(Error{ErrorComponent::kAudio, "monitor application audio",
+                          exception.what()}
+                        .ToString());
+  }
+  if (SUCCEEDED(com_result)) CoUninitialize();
 }
 
 bool AudioPipeline::StartMicrophone(int index, Error& error) {
@@ -377,10 +688,14 @@ void AudioPipeline::MixerLoop(std::stop_token stop_token) noexcept {
         std::unique_lock lock(mixer_mutex_);
         std::stop_callback wake(stop_token, [this] { mixer_cv_.notify_all(); });
         mixer_cv_.wait_for(lock, wait, [&stop_token] { return stop_token.stop_requested(); });
+        const bool desktop_enabled = desktop_enabled_.load(std::memory_order_acquire);
         state_.SetAudio(
-            Active(desktop_buffer_), Active(microphone_buffer_),
-            std::clamp(Level(desktop_buffer_) * desktop_gain_.load(std::memory_order_acquire),
-                       0.0F, 1.0F),
+            desktop_enabled && Active(desktop_buffer_), Active(microphone_buffer_),
+            desktop_enabled
+                ? std::clamp(Level(desktop_buffer_) *
+                                 desktop_gain_.load(std::memory_order_acquire),
+                             0.0F, 1.0F)
+                : 0.0F,
             std::clamp(Level(microphone_buffer_) *
                            microphone_gain_.load(std::memory_order_acquire),
                        0.0F, 1.0F));
@@ -397,10 +712,13 @@ void AudioPipeline::MixerLoop(std::stop_token stop_token) noexcept {
         state_.SetError(error);
         logger_.ErrorMessage(error);
       }
+      const bool desktop_enabled = desktop_enabled_.load(std::memory_order_acquire);
       state_.SetAudio(
-          Active(desktop_buffer_), Active(microphone_buffer_),
-          std::clamp(Level(desktop_buffer_) * desktop_gain_.load(std::memory_order_acquire), 0.0F,
-                     1.0F),
+          desktop_enabled && Active(desktop_buffer_), Active(microphone_buffer_),
+          desktop_enabled
+              ? std::clamp(Level(desktop_buffer_) * desktop_gain_.load(std::memory_order_acquire),
+                           0.0F, 1.0F)
+              : 0.0F,
           std::clamp(Level(microphone_buffer_) * microphone_gain_.load(std::memory_order_acquire),
                      0.0F, 1.0F));
     }
@@ -413,6 +731,7 @@ void AudioPipeline::MixerLoop(std::stop_token stop_token) noexcept {
 
 bool AudioPipeline::MixFrame(std::vector<float>& output, int frame_count, std::int64_t& pts) {
   if (frame_count <= 0 || next_pts_ == AV_NOPTS_VALUE) return false;
+  const bool desktop_required = desktop_enabled_.load(std::memory_order_acquire);
   const bool microphone_required = microphone_running_.load(std::memory_order_acquire);
   const auto frame_duration = FramesTo100ns(frame_count);
   std::scoped_lock lock(desktop_buffer_.mutex, microphone_buffer_.mutex);
@@ -448,7 +767,8 @@ bool AudioPipeline::MixFrame(std::vector<float>& output, int frame_count, std::i
     }
     source.read_pts += FramesTo100ns(take);
   };
-  mix(desktop_buffer_, desktop_gain_.load(std::memory_order_acquire));
+  if (desktop_required)
+    mix(desktop_buffer_, desktop_gain_.load(std::memory_order_acquire));
   if (microphone_required)
     mix(microphone_buffer_, microphone_gain_.load(std::memory_order_acquire));
   for (auto& sample : output) sample = std::clamp(sample, -1.0F, 1.0F);

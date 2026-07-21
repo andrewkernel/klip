@@ -32,8 +32,11 @@ class KlipApplication {
   KlipApplication(const KlipApplication&) = delete;
   KlipApplication& operator=(const KlipApplication&) = delete;
 
-  bool Initialize(HINSTANCE instance, int show_command, Error& error);
+  bool Initialize(HINSTANCE instance, int show_command, Error& error,
+                  bool register_hotkeys = true);
   int Run();
+  int RunCaptureAcceptanceTest();
+  int RunSettingsAcceptanceTest();
   void Shutdown() noexcept;
 
  private:
@@ -42,6 +45,9 @@ class KlipApplication {
   void UpdateRollingMetrics();
   bool PersistSettings(const AppConfig& config, bool restart_required);
   bool ApplySettings(const AppConfig& config);
+  bool StartMediaPipeline(const AppConfig& config, Error& error);
+  void StopMediaPipeline() noexcept;
+  bool RestartMediaPipeline(const AppConfig& config, Error& error);
 
   AppConfig config_;
   std::filesystem::path settings_path_;

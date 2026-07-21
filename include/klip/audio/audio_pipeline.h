@@ -41,6 +41,8 @@ class AudioPipeline {
   void Shutdown() noexcept;
   void StopCapture() noexcept;
   void SetMicrophoneEnabled(bool enabled);
+  void SetDesktopEnabled(bool enabled) noexcept;
+  void SetExcludedApplication(std::string executable_name);
   void SetDesktopGain(float gain) noexcept;
   void SetMicrophoneGain(float gain) noexcept;
   void SelectMicrophone(int index);
@@ -72,13 +74,15 @@ class AudioPipeline {
   };
 
   bool EnumerateMicrophones(Error& error);
+  bool EnumerateAudioApplications(Error& error);
   bool OpenContext(CaptureContext& context, const std::wstring& device_id, DWORD flags,
-                   Error& error);
+                   Error& error, DWORD excluded_process_id = 0);
   bool StartDesktop(Error& error);
   bool StartMicrophone(int index, Error& error);
   void StopContext(CaptureContext& context) noexcept;
   void CaptureLoop(CaptureContext& context, SourceBuffer& buffer,
                    std::stop_token stop_token) noexcept;
+  void ApplicationAudioLoop(std::stop_token stop_token) noexcept;
   void MixerLoop(std::stop_token stop_token) noexcept;
   bool MixFrame(std::vector<float>& output, int frame_count, std::int64_t& pts);
   void Append(SourceBuffer& buffer, std::int64_t pts, const float* samples, int frames,
@@ -99,11 +103,15 @@ class AudioPipeline {
   std::int64_t qpc_frequency_ = 0;
   std::atomic<bool> running_{false};
   std::atomic<bool> microphone_running_{false};
+  std::atomic<bool> desktop_enabled_{true};
   std::atomic<float> desktop_gain_{1.0F};
   std::atomic<float> microphone_gain_{1.0F};
   std::atomic<std::uint64_t> sample_generation_{0};
+  std::atomic<DWORD> excluded_process_candidate_id_{0};
+  std::atomic<bool> excluded_process_active_{false};
   mutable std::mutex control_mutex_;
   std::vector<Microphone> microphones_;
+  std::vector<AudioApplicationOption> audio_applications_;
   int selected_microphone_ = -1;
   winrt::com_ptr<IMMDeviceEnumerator> enumerator_;
   CaptureContext desktop_;
@@ -111,6 +119,7 @@ class AudioPipeline {
   SourceBuffer desktop_buffer_;
   SourceBuffer microphone_buffer_;
   std::jthread mixer_thread_;
+  std::jthread application_audio_thread_;
   mutable std::mutex mixer_mutex_;
   std::condition_variable mixer_cv_;
   std::int64_t next_pts_ = AV_NOPTS_VALUE;

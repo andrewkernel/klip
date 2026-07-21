@@ -56,9 +56,6 @@ class VideoEncoder {
   void FlushLocked() noexcept;
   void ReleaseCodec() noexcept;
   std::vector<std::string> BuildPreference() const;
-  static void SetOptions(AVDictionary** options, const std::string& name, std::uint32_t fps,
-                         EncoderQuality quality);
-
   PacketRouter& router_;
   ApplicationState& state_;
   Logger& logger_;
@@ -66,11 +63,16 @@ class VideoEncoder {
   std::uint32_t adapter_vendor_id_ = 0;
   winrt::com_ptr<ID3D11Device> device_;
   winrt::com_ptr<ID3D11DeviceContext> context_;
+  winrt::com_ptr<ID3D11Texture2D> staging_texture_;
+  std::uint32_t staging_width_ = 0;
+  std::uint32_t staging_height_ = 0;
   AVBufferRef* hardware_device_ = nullptr;
   AVBufferRef* hardware_frames_ = nullptr;
   AVCodecContext* codec_ = nullptr;
   std::uint32_t width_ = 0;
   std::uint32_t height_ = 0;
+  std::string active_encoder_;
+  std::vector<std::string> runtime_rejected_encoders_;
   std::int64_t last_pts_ = AV_NOPTS_VALUE;
   std::int64_t last_dts_ = AV_NOPTS_VALUE;
   bool force_keyframe_ = true;

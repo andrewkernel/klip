@@ -36,6 +36,11 @@ struct CaptureSourceOption {
   std::string label;
 };
 
+struct AudioApplicationOption {
+  std::uint32_t process_id = 0;
+  std::string name;
+};
+
 struct ApplicationSnapshot {
   CaptureStatus status = CaptureStatus::kIdle;
   CaptureTargetMode target_mode = CaptureTargetMode::kGameWindow;
@@ -50,6 +55,7 @@ struct ApplicationSnapshot {
   float desktop_audio_level = 0.0F;
   float microphone_level = 0.0F;
   std::vector<std::string> microphones;
+  std::vector<AudioApplicationOption> audio_applications;
   int selected_microphone_index = -1;
   std::filesystem::path last_saved_clip;
   bool recording = false;
@@ -80,6 +86,7 @@ class ApplicationState {
                 float microphone_level);
   void SetMicrophoneEnabled(bool enabled);
   void SetMicrophones(std::vector<std::string> microphones, int selected_index);
+  void SetAudioApplications(std::vector<AudioApplicationOption> applications);
   void SetMetrics(const MetricsSnapshot& metrics);
   void SetCaptureMetrics(double fps, std::uint64_t captured_frames,
                          std::uint64_t dropped_raw_frames, std::uint64_t dropped_encode_frames,

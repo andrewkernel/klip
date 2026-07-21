@@ -27,6 +27,13 @@
 
 namespace klip {
 
+struct CapturePreview {
+  winrt::com_ptr<ID3D11ShaderResourceView> texture;
+  winrt::com_ptr<ID3D11ShaderResourceView> overlay_texture;
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+};
+
 class GraphicsCapture {
  public:
   GraphicsCapture(VideoEncoder& encoder, ApplicationState& state, Logger& logger);
@@ -42,6 +49,8 @@ class GraphicsCapture {
   void SetTargetMode(CaptureTargetMode mode);
   void SelectTarget(CaptureTargetMode mode, std::uint64_t source_id);
   void SetBorderRequired(bool required);
+  void SetPreviewEnabled(bool enabled) noexcept;
+  [[nodiscard]] CapturePreview Preview() const;
   [[nodiscard]] int64_t QpcOrigin() const noexcept { return qpc_origin_; }
   [[nodiscard]] int64_t QpcFrequency() const noexcept { return qpc_frequency_; }
 
@@ -87,7 +96,17 @@ class GraphicsCapture {
                       const winrt::Windows::Foundation::IInspectable&);
 
   bool EnsureConverter(std::uint32_t width, std::uint32_t height, Error& error);
+  bool LoadStaticOverlay(Error& error);
+  bool StartLiveOverlay(Error& error);
+  void StopLiveOverlay() noexcept;
+  void OnOverlayFrameArrived(
+      const winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool& sender,
+      const winrt::Windows::Foundation::IInspectable&);
+  void OnOverlayTargetClosed(
+      const winrt::Windows::Graphics::Capture::GraphicsCaptureItem&,
+      const winrt::Windows::Foundation::IInspectable&);
   bool Convert(const RawFrame& input, ConvertedFrame& output, Error& error);
+  void UpdatePreview(const RawFrame& input) noexcept;
   winrt::com_ptr<ID3D11Texture2D> CreateNv12Texture(std::uint32_t width,
                                                     std::uint32_t height) const;
   winrt::com_ptr<ID3D11Texture2D> AcquireNv12Texture(std::uint32_t width, std::uint32_t height);
@@ -112,6 +131,7 @@ class GraphicsCapture {
   std::atomic<bool> running_{false};
   std::atomic<bool> recycle_enabled_{false};
   std::atomic<bool> target_dirty_{false};
+  std::atomic<bool> preview_enabled_{false};
   std::atomic<CaptureTargetMode> target_mode_{CaptureTargetMode::kGameWindow};
   std::atomic<std::uintptr_t> selected_window_{0};
   std::atomic<std::uintptr_t> selected_monitor_{0};
@@ -145,6 +165,14 @@ class GraphicsCapture {
   std::uint32_t current_width_ = 0;
   std::uint32_t current_height_ = 0;
 
+  std::mutex overlay_session_mutex_;
+  HWND overlay_window_ = nullptr;
+  winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool overlay_frame_pool_{nullptr};
+  winrt::Windows::Graphics::Capture::GraphicsCaptureSession overlay_session_{nullptr};
+  winrt::Windows::Graphics::Capture::GraphicsCaptureItem overlay_item_{nullptr};
+  winrt::event_token overlay_frame_token_{};
+  winrt::event_token overlay_closed_token_{};
+
   std::mutex converter_mutex_;
   winrt::com_ptr<ID3D11VideoProcessorEnumerator> processor_enumerator_;
   winrt::com_ptr<ID3D11VideoProcessor> processor_;
@@ -154,6 +182,23 @@ class GraphicsCapture {
   std::vector<winrt::com_ptr<ID3D11Texture2D>> texture_pool_;
   std::uint32_t texture_pool_width_ = 0;
   std::uint32_t texture_pool_height_ = 0;
+
+  mutable std::mutex preview_mutex_;
+  winrt::com_ptr<ID3D11Texture2D> preview_texture_;
+  winrt::com_ptr<ID3D11ShaderResourceView> preview_view_;
+  std::uint32_t preview_width_ = 0;
+  std::uint32_t preview_height_ = 0;
+  std::chrono::steady_clock::time_point next_preview_update_{};
+  winrt::com_ptr<ID3D11Texture2D> static_overlay_texture_;
+  winrt::com_ptr<ID3D11ShaderResourceView> static_overlay_view_;
+  std::uint32_t static_overlay_width_ = 0;
+  std::uint32_t static_overlay_height_ = 0;
+  winrt::com_ptr<ID3D11Texture2D> live_overlay_texture_;
+  winrt::com_ptr<ID3D11ShaderResourceView> live_overlay_view_;
+  std::uint32_t live_overlay_width_ = 0;
+  std::uint32_t live_overlay_height_ = 0;
+  std::chrono::steady_clock::time_point next_live_overlay_update_{};
+  bool overlay_warning_logged_ = false;
 
   std::unique_ptr<SpscQueue<RawFrame>> raw_queue_;
   std::unique_ptr<SpscQueue<ConvertedFrame>> encode_queue_;

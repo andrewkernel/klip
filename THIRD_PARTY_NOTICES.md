@@ -24,6 +24,15 @@ text installed by vcpkg.
 
 - Project and source: https://github.com/ocornut/imgui
 
+## Inter
+
+Klip bundles the Inter typeface for its desktop interface. Inter is Copyright 2016 The Inter
+Project Authors and is distributed under the SIL Open Font License, Version 1.1. The packaged
+distribution includes the complete license text.
+
+- Project: https://rsms.me/inter/
+- Source: https://github.com/rsms/inter
+
 This notice is informational and is not legal advice. Klip itself is distributed under
 the End User License Agreement in `EULA.txt`; that agreement does not replace or restrict
 the licenses that apply to the third-party components listed above.

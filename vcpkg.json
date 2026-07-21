@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
   "name": "klip",
-  "version-semver": "3.0.1",
+  "version-semver": "3.0.2",
   "builtin-baseline": "908da3a305a0a8028d9602ab241b433652b3df69",
   "dependencies": [
     {

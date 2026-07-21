@@ -48,6 +48,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_
   try {
     const bool package_smoke_test =
         HasCommandLineFlag(command_line, L"--package-smoke-test");
+    const bool capture_smoke_test =
+        HasCommandLineFlag(command_line, L"--capture-smoke-test");
+    const bool settings_apply_smoke_test =
+        HasCommandLineFlag(command_line, L"--settings-apply-smoke-test");
+    const bool software_fallback_smoke_test =
+        HasCommandLineFlag(command_line, L"--software-fallback-smoke-test");
     ProcessApartment apartment;
     av_log_set_level(AV_LOG_ERROR);
     ImGui_ImplWin32_EnableDpiAwareness();
@@ -66,6 +72,31 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_
                   MB_OK | MB_ICONWARNING);
     }
 
+    if (capture_smoke_test || settings_apply_smoke_test || software_fallback_smoke_test) {
+      // Exercise the same conservative path on every tester. Vendor prioritization still chooses
+      // NVENC, AMF, or Media Foundation from the actual adapter detected by D3D11.
+      config.target_mode = klip::CaptureTargetMode::kDisplay;
+      config.preferred_display_name.clear();
+      config.preferred_game_title.clear();
+      config.target_fps = 60;
+      config.output_width = 1920;
+      config.output_height = 1080;
+      config.video_bitrate = 8'000'000;
+      config.encoder_quality = klip::EncoderQuality::kPerformance;
+      config.scaling_mode = klip::VideoScalingMode::kFit;
+      config.encoder_preferences = {"h264_nvenc", "h264_amf", "h264_mf"};
+      config.desktop_audio_enabled = true;
+      config.excluded_audio_process.clear();
+      config.microphone_enabled = false;
+      config.capture_cursor = false;
+      config.capture_border = false;
+      config.capture_preview_enabled = false;
+      config.static_overlay_enabled = false;
+      config.live_overlay_enabled = false;
+      if (software_fallback_smoke_test)
+        config.encoder_preferences = {"h264_mf_software"};
+    }
+
     // The release workflow runs this from both the installed and portable packages on a clean
     // Windows runner. Reaching here proves the executable loader resolved every imported DLL and
     // that first-run path/config initialization works, without pretending a VM without gaming
@@ -74,11 +105,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_
 
     klip::KlipApplication application(std::move(config), user_paths.settings_file);
     klip::Error error;
-    if (!application.Initialize(instance, show_command, error)) {
+    const bool acceptance_test =
+        capture_smoke_test || settings_apply_smoke_test || software_fallback_smoke_test;
+    if (!application.Initialize(instance, acceptance_test ? SW_HIDE : show_command, error,
+                                !acceptance_test)) {
       MessageBoxA(nullptr, error.ToString().c_str(), "Klip startup failed", MB_OK | MB_ICONERROR);
       return 1;
     }
-    return application.Run();
+    if (settings_apply_smoke_test) return application.RunSettingsAcceptanceTest();
+    return (capture_smoke_test || software_fallback_smoke_test)
+               ? application.RunCaptureAcceptanceTest()
+               : application.Run();
   } catch (const std::exception& exception) {
     MessageBoxA(nullptr, exception.what(), "Klip fatal error", MB_OK | MB_ICONERROR);
     return 1;

@@ -4,8 +4,8 @@
 
 - 64-bit Windows 10 version 1903 (build 18362) or newer, or Windows 11.
 - An x64 processor and a DirectX 11-capable GPU.
-- A current GPU driver with a hardware H.264 encoder exposed through NVIDIA NVENC, AMD AMF,
-  Intel Quick Sync, or Windows Media Foundation.
+- A current GPU driver. Hardware H.264 through NVIDIA NVENC, AMD AMF, Intel/Windows Media
+  Foundation is preferred; a tested Windows Media Foundation software fallback is included.
 - At least 4 GB RAM; 8 GB or more is recommended while gaming.
 - Enough free storage for the selected bitrate. At the 12 Mbps default, video uses about
   90 MB per minute before audio and container overhead.
@@ -18,8 +18,10 @@ Klip does not require administrator access. The installer is per-user and instal
 
 The current build has been exercised on Windows with an NVIDIA GeForce RTX 3060 using NVENC,
 at 1920×1080 and 60 FPS. Replay clips and continuous recordings produced H.264 video plus
-48 kHz AAC audio. AMD and Intel paths are implemented but must pass the full hardware checklist
-in [verification.md](verification.md) before being advertised as verified configurations.
+48 kHz AAC audio. The forced `h264_mf_software` path also produced a complete recording at
+1920×1080, proving operation without a usable dedicated encoder on the tested Windows system.
+AMD and Intel hardware routing is covered by deterministic tests but still requires the full
+hardware checklist in [verification.md](verification.md) before being advertised as verified.
 
 ## Expected limitations
 

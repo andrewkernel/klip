@@ -4,8 +4,47 @@
 #include <imgui_impl_dx11.h>
 #include <imgui_impl_win32.h>
 
+#include <filesystem>
+#include <fstream>
+
 namespace klip {
 namespace {
+
+std::filesystem::path ExecutableDirectory() {
+  std::wstring path(32768, L'\0');
+  const auto length =
+      GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+  if (length == 0 || length >= path.size()) return std::filesystem::current_path();
+  path.resize(length);
+  return std::filesystem::path(path).parent_path();
+}
+
+ImFont* AddFontFromPath(ImFontAtlas* atlas, const std::filesystem::path& path, float size,
+                        const ImFontConfig& base_config) {
+  std::ifstream input(path, std::ios::binary | std::ios::ate);
+  if (!input) return nullptr;
+  const auto end = input.tellg();
+  if (end <= 0 || end > static_cast<std::streamoff>(64 * 1024 * 1024)) return nullptr;
+  const auto bytes = static_cast<std::size_t>(end);
+  auto* data = IM_ALLOC(bytes);
+  if (data == nullptr) return nullptr;
+  input.seekg(0, std::ios::beg);
+  if (!input.read(static_cast<char*>(data), static_cast<std::streamsize>(bytes))) {
+    IM_FREE(data);
+    return nullptr;
+  }
+  auto config = base_config;
+  config.FontDataOwnedByAtlas = true;
+  return atlas->AddFontFromMemoryTTF(data, static_cast<int>(bytes), size, &config);
+}
+
+ImFont* AddUiFont(ImFontAtlas* atlas, const std::filesystem::path& font_directory,
+                  const char* bundled_name, const char* system_fallback, float size,
+                  const ImFontConfig& config) {
+  if (auto* font = AddFontFromPath(atlas, font_directory / bundled_name, size, config))
+    return font;
+  return atlas->AddFontFromFileTTF(system_fallback, size, &config);
+}
 
 void ApplyStyle() {
   ImGui::StyleColorsDark();
@@ -53,13 +92,19 @@ bool ImGuiHost::Initialize(HWND window, ID3D11Device* device, ID3D11DeviceContex
   font_config.OversampleH = 2;
   font_config.OversampleV = 2;
   font_config.PixelSnapH = false;
-  auto* regular = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 17.0F,
-                                               &font_config);
-  io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\seguisb.ttf", 17.0F, &font_config);
-  io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeuib.ttf", 30.0F, &font_config);
-  io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeuil.ttf", 44.0F, &font_config);
-  io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\consola.ttf", 13.0F, &font_config);
-  if (regular == nullptr) io.Fonts->AddFontDefault();
+  font_config.RasterizerMultiply = 1.04F;
+  const auto font_directory = ExecutableDirectory() / "fonts";
+  auto* regular = AddUiFont(io.Fonts, font_directory, "Inter-Regular.ttf",
+                            "C:\\Windows\\Fonts\\segoeui.ttf", 17.0F, font_config);
+  AddUiFont(io.Fonts, font_directory, "Inter-Medium.ttf",
+            "C:\\Windows\\Fonts\\seguisb.ttf", 17.0F, font_config);
+  AddUiFont(io.Fonts, font_directory, "Inter-SemiBold.ttf",
+            "C:\\Windows\\Fonts\\seguisb.ttf", 30.0F, font_config);
+  AddUiFont(io.Fonts, font_directory, "Inter-Bold.ttf",
+            "C:\\Windows\\Fonts\\segoeuib.ttf", 44.0F, font_config);
+  AddUiFont(io.Fonts, font_directory, "Inter-Medium.ttf",
+            "C:\\Windows\\Fonts\\seguisb.ttf", 13.0F, font_config);
+  if (regular == nullptr) regular = io.Fonts->AddFontDefault();
   io.FontDefault = regular;
   ApplyStyle();
   win32_initialized_ = ImGui_ImplWin32_Init(window);

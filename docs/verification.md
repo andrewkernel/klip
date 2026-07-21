@@ -23,6 +23,40 @@ hosted VM; vendor GPU, WGC, WASAPI, and media-quality coverage remains in the ch
 Set `KLIP_DATA_ROOT` to an isolated directory for smoke tests that must not touch the normal
 LocalAppData/Videos locations. The override affects settings, logs, clips, and recordings only.
 
+### Hardware capture acceptance mode
+
+Run this from an installed or portable release directory on each physical GPU:
+
+```powershell
+$env:KLIP_DATA_ROOT = Join-Path $PWD "capture-acceptance"
+.\Klip.exe --capture-smoke-test
+$LASTEXITCODE
+Get-Content "$env:KLIP_DATA_ROOT\klip.log"
+```
+
+The mode stays hidden, selects the primary display, disables overlays and microphone capture,
+uses the performance preset at 1920x1080/60 FPS, and lets adapter-aware encoder priority choose
+NVENC, AMF, or Media Foundation. It records five seconds through the real WGC, WASAPI, encoder,
+packet-router, and MP4 muxer path. Exit code `0`, a finalized MP4 of at least 64 KiB, and a
+`CAPTURE ACCEPTANCE PASSED` log entry are required. On an AMD machine, `encoder=h264_amf` proves
+the native AMF path; a Media Foundation result proves compatibility fallback only and must be
+reported separately.
+
+Use `--settings-apply-smoke-test` for the recording-quality gate. It applies the Balanced preset
+at 1920x1080/60 FPS, saves a replay clip, then saves a five-second recording. For both MP4 files,
+require `r_frame_rate=60/1`, `avg_frame_rate=60/1`, H.264 High profile, BT.709 primaries/transfer/
+matrix, TV range, and B-frames when the selected hardware encoder supports them.
+
+### OBS-parity quality smoke (2026-07-21)
+
+- Compared the current Klip pipeline against OBS Studio's recording-oriented NVENC defaults and
+  fixed-frame video clock. Balanced NVENC now uses P5/HQ, quarter-resolution multipass, adaptive
+  quantization, lookahead, a two-second GOP, and two B-frames.
+- On an NVIDIA RTX 3060, the isolated settings-apply acceptance test saved a 90-frame,
+  1.500-second replay and a 272-frame, 4.533-second recording. `ffprobe` reported exact 60/1
+  nominal and average frame rates for both, 1920x1080 H.264 High, two B-frames, BT.709 TV range,
+  and approximately 6.0 Mbps.
+
 ### Local implementation smoke (2026-07-17)
 
 - All 32 application translation units compiled and linked for Win64 with LLVM-MinGW using
@@ -54,7 +88,7 @@ LocalAppData/Videos locations. The override affects settings, logs, clips, and r
 Verify on each supported GPU/vendor and intended Windows release:
 
 1. `Klip.exe` starts and the ImGui window renders.
-2. Game/window and display source lists populate; each listed target can be selected and is remembered after restart.
+2. Game/window and display source lists populate; each listed target can be selected and is remembered after reopening Klip.
 3. Targets can be resized and closed without a hang or stale texture use.
 4. Desktop audio activity and level respond.
 5. Microphone capture can be disabled, enabled, and switched.
@@ -64,8 +98,12 @@ Verify on each supported GPU/vendor and intended Windows release:
 9. Repeated saves do not stall capture and queue/drop metrics remain credible.
 10. Completed MP4 files open, begin on a decodable video keyframe, and retain A/V sync.
 11. The expected GPU encoder is selected; removing one encoder from the FFmpeg build exercises fallback.
+    Run `--capture-smoke-test` and `--software-fallback-smoke-test`, then retain their logs
+    and MP4s as acceptance evidence.
 12. Repeated start/exit cycles do not hang; no worker remains after process exit.
-13. Change FPS, resolution, bitrate, encoder, quality, cursor, replay duration, audio bitrate, and storage settings; restart and confirm every saved value is restored.
+13. Change FPS, resolution, bitrate, encoder, quality, cursor, replay duration, audio bitrate,
+    and storage settings; press **Save & Apply** and confirm capture resumes without an app
+    restart. Reopen Klip afterward and confirm every saved value is restored.
 14. Confirm clips, recordings, settings, and logs land in the documented user folders when launched from the installer and portable package.
 15. Install and uninstall as a standard user; verify the installer requests no elevation and does not remove user media/settings.
 16. Confirm the interactive installer displays `EULA.txt`, cannot continue until **I accept the agreement** is selected, and installs `EULA.txt`, `PRIVACY.md`, and third-party notices beside the application.
@@ -77,6 +115,7 @@ Release-candidate additions:
 - Rebind each action to a different Ctrl/Alt/Shift combination, save, and confirm the new
   shortcuts work globally without a restart; confirm duplicate and unavailable chords are rejected.
 - Enable performance mode and confirm it applies 1280x720, 60 FPS, 8 Mbps, automatic encoder
-  selection, and the performance encoder preset, then restart and confirm the preset persists.
+  selection, and the performance encoder preset without restarting, then reopen and confirm
+  the preset persists.
 
 Do not interpret passing core tests as validation of WGC, WASAPI, GPU drivers, FFmpeg hardware interoperability, or media quality.

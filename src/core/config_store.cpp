@@ -112,18 +112,23 @@ const char* QualityName(EncoderQuality quality) {
   return "balanced";
 }
 
+const char* ScalingName(VideoScalingMode mode) {
+  return mode == VideoScalingMode::kFit ? "fit" : "stretch";
+}
+
 bool AssignValue(AppConfig& config, const std::string& key, const std::string& value) {
   if (key == "clip_duration_seconds") return ParseDouble(value, config.clip_duration_seconds);
   if (key == "target_fps") {
     std::uint32_t parsed = 0;
     if (!ParseInteger(value, parsed)) return false;
-    config.target_fps = parsed == 120 ? 60 : parsed;
+    config.target_fps = parsed;
     return true;
   }
   if (key == "output_width") return ParseInteger(value, config.output_width);
   if (key == "output_height") return ParseInteger(value, config.output_height);
   if (key == "video_bitrate") return ParseInteger(value, config.video_bitrate);
   if (key == "audio_bitrate") return ParseInteger(value, config.audio_bitrate);
+  if (key == "desktop_audio_enabled") return ParseBool(value, config.desktop_audio_enabled);
   if (key == "desktop_audio_gain") return ParseDouble(value, config.desktop_audio_gain);
   if (key == "microphone_audio_gain") return ParseDouble(value, config.microphone_audio_gain);
   if (key == "rolling_buffer_seconds") return ParseDouble(value, config.rolling_buffer_seconds);
@@ -131,6 +136,23 @@ bool AssignValue(AppConfig& config, const std::string& key, const std::string& v
   if (key == "microphone_enabled") return ParseBool(value, config.microphone_enabled);
   if (key == "capture_cursor") return ParseBool(value, config.capture_cursor);
   if (key == "capture_border") return ParseBool(value, config.capture_border);
+  if (key == "capture_preview_enabled")
+    return ParseBool(value, config.capture_preview_enabled);
+  if (key == "static_overlay_enabled") return ParseBool(value, config.static_overlay_enabled);
+  if (key == "static_overlay_path") {
+    config.static_overlay_path = ParsePath(value);
+    return true;
+  }
+  if (key == "live_overlay_enabled") return ParseBool(value, config.live_overlay_enabled);
+  if (key == "live_overlay_window_title") {
+    config.live_overlay_window_title = ParseString(value);
+    return true;
+  }
+  if (key == "static_overlay_x") return ParseDouble(value, config.static_overlay_x);
+  if (key == "static_overlay_y") return ParseDouble(value, config.static_overlay_y);
+  if (key == "static_overlay_width") return ParseDouble(value, config.static_overlay_width);
+  if (key == "static_overlay_height") return ParseDouble(value, config.static_overlay_height);
+  if (key == "static_overlay_opacity") return ParseDouble(value, config.static_overlay_opacity);
   if (key == "hotkey_modifiers") {
     unsigned int modifiers = 0;
     if (!ParseInteger(value, modifiers)) return false;
@@ -171,6 +193,10 @@ bool AssignValue(AppConfig& config, const std::string& key, const std::string& v
     config.preferred_microphone_name = ParseString(value);
     return true;
   }
+  if (key == "excluded_audio_process") {
+    config.excluded_audio_process = ParseString(value);
+    return true;
+  }
   if (key == "capture_mode") {
     if (value == "display") config.target_mode = CaptureTargetMode::kDisplay;
     if (value == "game_window" || value == "active_window")
@@ -182,6 +208,11 @@ bool AssignValue(AppConfig& config, const std::string& key, const std::string& v
     if (value == "balanced") config.encoder_quality = EncoderQuality::kBalanced;
     if (value == "quality") config.encoder_quality = EncoderQuality::kQuality;
     return value == "performance" || value == "balanced" || value == "quality";
+  }
+  if (key == "scaling_mode") {
+    if (value == "fit") config.scaling_mode = VideoScalingMode::kFit;
+    if (value == "stretch") config.scaling_mode = VideoScalingMode::kStretch;
+    return value == "fit" || value == "stretch";
   }
   if (key == "encoder_preferences") {
     auto encoders = SplitEncoders(value);
@@ -232,6 +263,9 @@ bool LoadConfig(const std::filesystem::path& path, AppConfig& config, std::strin
     }
   }
 
+  // 120 fps was offered by pre-3.0.1 builds but proved too hardware-specific for a safe
+  // default. Migrate those existing settings instead of making an older installation fail.
+  if (loaded.target_fps == 120) loaded.target_fps = 60;
   const auto issues = ValidateConfig(loaded);
   if (!issues.empty()) {
     diagnostic = "Invalid saved setting '" + issues.front().field + "': " +
@@ -273,6 +307,8 @@ bool SaveConfig(const std::filesystem::path& path, const AppConfig& config,
   output << "output_height=" << config.output_height << '\n';
   output << "video_bitrate=" << config.video_bitrate << '\n';
   output << "audio_bitrate=" << config.audio_bitrate << '\n';
+  output << "desktop_audio_enabled=" << (config.desktop_audio_enabled ? "true" : "false")
+         << '\n';
   output << "desktop_audio_gain=" << config.desktop_audio_gain << '\n';
   output << "microphone_audio_gain=" << config.microphone_audio_gain << '\n';
   output << "rolling_buffer_seconds=" << config.rolling_buffer_seconds << '\n';
@@ -280,6 +316,20 @@ bool SaveConfig(const std::filesystem::path& path, const AppConfig& config,
   output << "microphone_enabled=" << (config.microphone_enabled ? "true" : "false") << '\n';
   output << "capture_cursor=" << (config.capture_cursor ? "true" : "false") << '\n';
   output << "capture_border=" << (config.capture_border ? "true" : "false") << '\n';
+  output << "capture_preview_enabled="
+         << (config.capture_preview_enabled ? "true" : "false") << '\n';
+  output << "static_overlay_enabled=" << (config.static_overlay_enabled ? "true" : "false")
+         << '\n';
+  output << "static_overlay_path=" << std::quoted(PathText(config.static_overlay_path)) << '\n';
+  output << "live_overlay_enabled=" << (config.live_overlay_enabled ? "true" : "false")
+         << '\n';
+  output << "live_overlay_window_title=" << std::quoted(config.live_overlay_window_title)
+         << '\n';
+  output << "static_overlay_x=" << config.static_overlay_x << '\n';
+  output << "static_overlay_y=" << config.static_overlay_y << '\n';
+  output << "static_overlay_width=" << config.static_overlay_width << '\n';
+  output << "static_overlay_height=" << config.static_overlay_height << '\n';
+  output << "static_overlay_opacity=" << config.static_overlay_opacity << '\n';
   output << "hotkey_save_modifiers=" << config.hotkeys.save_modifiers << '\n';
   output << "hotkey_record_modifiers=" << config.hotkeys.record_modifiers << '\n';
   output << "hotkey_toggle_ui_modifiers=" << config.hotkeys.toggle_ui_modifiers << '\n';
@@ -287,6 +337,7 @@ bool SaveConfig(const std::filesystem::path& path, const AppConfig& config,
   output << "hotkey_record_virtual_key=" << config.hotkeys.record_virtual_key << '\n';
   output << "hotkey_toggle_ui_virtual_key=" << config.hotkeys.toggle_ui_virtual_key << '\n';
   output << "capture_mode=" << ModeName(config.target_mode) << '\n';
+  output << "scaling_mode=" << ScalingName(config.scaling_mode) << '\n';
   output << "encoder_quality=" << QualityName(config.encoder_quality) << '\n';
   output << "encoder_preferences=" << JoinEncoders(config.encoder_preferences) << '\n';
   output << "output_directory=" << std::quoted(PathText(config.output_directory)) << '\n';
@@ -295,6 +346,7 @@ bool SaveConfig(const std::filesystem::path& path, const AppConfig& config,
   output << "preferred_display_name=" << std::quoted(config.preferred_display_name) << '\n';
   output << "preferred_microphone_name=" << std::quoted(config.preferred_microphone_name)
          << '\n';
+  output << "excluded_audio_process=" << std::quoted(config.excluded_audio_process) << '\n';
   output.flush();
   if (!output) {
     diagnostic = "Could not finish writing settings file: " + temporary.string();
