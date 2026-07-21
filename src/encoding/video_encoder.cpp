@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <limits>
 #include <memory>
+#include <thread>
 
 #include "klip/core/encoder_tuning.h"
 #include "klip/core/encoder_selection.h"
@@ -46,6 +47,7 @@ bool VideoEncoder::Initialize(ID3D11Device* device, ID3D11DeviceContext* context
   adapter_vendor_id_ = adapter_vendor_id;
   config_ = config;
   runtime_rejected_encoders_.clear();
+  runtime_recovery_attempted_encoders_.clear();
   return CreateHardwareDevice(error);
 }
 
@@ -177,29 +179,31 @@ bool VideoEncoder::Encode(ID3D11Texture2D* texture, std::uint32_t width, std::ui
   }
 
   auto result = avcodec_send_frame(codec_, frame.get());
-  if (result == AVERROR(EAGAIN)) {
-    Drain(codec_pts);
+  // Hardware encoders are asynchronous. Drain and retry bounded transient backpressure instead
+  // of immediately turning one busy frame into a permanently stalled capture session.
+  for (int retry = 0; result == AVERROR(EAGAIN) && retry < 3; ++retry) {
+    const auto drain_result = Drain(codec_pts);
+    if (drain_result < 0) {
+      result = drain_result;
+      break;
+    }
+    std::this_thread::yield();
     result = avcodec_send_frame(codec_, frame.get());
   }
   if (result < 0) {
     error = MakeFfmpegError(ErrorComponent::kVideoEncoder, "submit video frame", result,
-                            state_.Snapshot().selected_encoder);
-    // A hardware encoder can successfully open and still reject the first native
-    // texture (most commonly AMF on a mismatched/outdated AMD driver). Do not leave
-    // capture permanently stuck on that backend: reject it for this session so the
-    // following frame opens the next configured hardware encoder.
-    if (!logged_first_packet_ && !active_encoder_.empty() &&
-        std::find(runtime_rejected_encoders_.begin(), runtime_rejected_encoders_.end(),
-                  active_encoder_) == runtime_rejected_encoders_.end()) {
-      runtime_rejected_encoders_.push_back(active_encoder_);
-      logger_.Warning("Video encoder rejected its first D3D11 frame; trying fallback: " +
-                      active_encoder_);
-      ReleaseCodec();
-    }
+                            active_encoder_);
+    RecoverFromRuntimeFailure();
     return false;
   }
   force_keyframe_ = false;
-  Drain(codec_pts);
+  const auto drain_result = Drain(codec_pts);
+  if (drain_result < 0) {
+    error = MakeFfmpegError(ErrorComponent::kVideoEncoder, "receive encoded packet",
+                            drain_result, active_encoder_);
+    RecoverFromRuntimeFailure();
+    return false;
+  }
   return true;
 }
 
@@ -399,20 +403,18 @@ bool VideoEncoder::TryOpen(const std::string& name, std::uint32_t width, std::ui
   return true;
 }
 
-void VideoEncoder::Drain(std::int64_t fallback_pts) {
+int VideoEncoder::Drain(std::int64_t fallback_pts) {
   PacketPtr packet(av_packet_alloc());
   if (!packet || codec_ == nullptr) {
-    return;
+    return codec_ == nullptr ? 0 : AVERROR(ENOMEM);
   }
   for (;;) {
     const auto result = avcodec_receive_packet(codec_, packet.get());
     if (result == AVERROR(EAGAIN) || result == AVERROR_EOF) {
-      return;
+      return 0;
     }
     if (result < 0) {
-      logger_.ErrorMessage(
-          MakeFfmpegError(ErrorComponent::kVideoEncoder, "receive encoded packet", result));
-      return;
+      return result;
     }
     if (!logged_first_packet_) {
       logger_.Info("First encoded video packet ready");
@@ -426,6 +428,25 @@ void VideoEncoder::Drain(std::int64_t fallback_pts) {
     router_.Publish(packet.get(), StreamKind::kVideo, codec_->time_base);
     av_packet_unref(packet.get());
   }
+}
+
+void VideoEncoder::RecoverFromRuntimeFailure() {
+  if (active_encoder_.empty()) return;
+  const auto failed_encoder = active_encoder_;
+  const auto recovery = std::find(runtime_recovery_attempted_encoders_.begin(),
+                                  runtime_recovery_attempted_encoders_.end(), failed_encoder);
+  if (recovery == runtime_recovery_attempted_encoders_.end()) {
+    runtime_recovery_attempted_encoders_.push_back(failed_encoder);
+    logger_.Warning("Video encoder failed at runtime; restarting once: " + failed_encoder);
+  } else if (std::find(runtime_rejected_encoders_.begin(), runtime_rejected_encoders_.end(),
+                       failed_encoder) == runtime_rejected_encoders_.end()) {
+    runtime_rejected_encoders_.push_back(failed_encoder);
+    logger_.Warning("Video encoder failed again; trying fallback: " + failed_encoder);
+  }
+  // An AVCodecContext is not reusable after ENOMEM/EINVAL from a hardware backend. Clearing the
+  // packet timeline also prevents pre-failure packets from being mixed with the new keyframe.
+  router_.ResetTimeline();
+  ReleaseCodec();
 }
 
 void VideoEncoder::NormalizeTimestamps(AVPacket* packet, std::int64_t fallback_pts) {

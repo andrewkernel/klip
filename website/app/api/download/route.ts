@@ -1,8 +1,8 @@
 import { incrementDownload } from "../../../db/download-counter";
 
 const targets = {
-  installer: "/Klip-3.0.2-win64-setup.exe",
-  portable: "/Klip-3.0.2-win64-portable.zip",
+  installer: "/Klip-3.0.3-win64-setup.exe",
+  portable: "/Klip-3.0.3-win64-portable.zip",
 } as const;
 
 export async function GET(request: Request) {

@@ -975,7 +975,7 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
     settings_open_ = true;
     ImGui::OpenPopup("settings###klip-settings-modal");
   }
-  constexpr std::string_view version = "v3.0.2";
+  constexpr std::string_view version = "v3.0.3";
   DrawText(draw, label_font, 10.0F,
            {content.x + content_width - TextWidth(label_font, 10.0F, version), footer_y + 21.0F},
            kMutedU32, version);
@@ -1021,10 +1021,14 @@ void MainPanel::RenderSettings(const ApplicationSnapshot& snapshot, const AppCon
                          : "off / recommended quality uses 1080p60, 12 Mbps, balanced hardware");
 
   SectionLabel("video / quality");
-  int fps = draft_.target_fps == 30 ? 0 : 1;
-  constexpr const char* frame_rates[] = {"30 fps / lightest", "60 fps / recommended"};
+  int fps = draft_.target_fps == 30 ? 0 : draft_.target_fps == 120 ? 2 : 1;
+  constexpr const char* frame_rates[] = {"30 fps / lightest", "60 fps / recommended",
+                                          "120 fps / high-end hardware"};
   if (ImGui::Combo("frame rate", &fps, frame_rates, IM_ARRAYSIZE(frame_rates)))
-    draft_.target_fps = fps == 0 ? 30U : 60U;
+    draft_.target_fps = fps == 0 ? 30U : fps == 2 ? 120U : 60U;
+  if (draft_.target_fps == 120)
+    ImGui::TextColored(kMuted,
+                       "120 fps requires a 120 Hz+ source and a fast hardware encoder.");
 
   int resolution = draft_.output_width == 1280 ? 2 : draft_.output_width == 1920 ? 1 : 0;
   constexpr const char* resolutions[] = {"source resolution", "1920 x 1080", "1280 x 720"};
@@ -1285,7 +1289,7 @@ void MainPanel::RenderSettings(const ApplicationSnapshot& snapshot, const AppCon
 
 void MainPanel::ResetDraft(const AppConfig& config) {
   draft_ = config;
-  if (draft_.target_fps != 30 && draft_.target_fps != 60) {
+  if (draft_.target_fps != 30 && draft_.target_fps != 60 && draft_.target_fps != 120) {
     draft_.target_fps = 60;
     ResizeReplayBudget(draft_);
   }

@@ -30,8 +30,8 @@ std::vector<ValidationIssue> ValidateConfig(const AppConfig& config) {
   if (config.clip_duration_seconds <= 0.0 || config.clip_duration_seconds > 600.0) {
     reject("clip_duration_seconds", "must be in (0, 600]");
   }
-  if (config.target_fps != 30 && config.target_fps != 60) {
-    reject("target_fps", "must be 30 or 60");
+  if (config.target_fps != 30 && config.target_fps != 60 && config.target_fps != 120) {
+    reject("target_fps", "must be 30, 60, or 120");
   }
   if ((config.output_width == 0) != (config.output_height == 0)) {
     reject("output_resolution", "width and height must both be zero or both be set");

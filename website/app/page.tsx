@@ -17,7 +17,7 @@ const featureHighlights = [
   ["01", "instant replay", "save the last 15–300 seconds with your own shortcut"],
   ["02", "full recording", "record complete sessions with a global keybind"],
   ["03", "audio control", "balance desktop and microphone levels before capture"],
-  ["04", "hardware encode", "capture at 30 or 60 fps with NVIDIA, AMD, or Intel"],
+  ["04", "hardware encode", "capture at 30, 60, or 120 fps with NVIDIA, AMD, or Intel"],
 ];
 
 const steps = [
@@ -133,7 +133,7 @@ export default function Home() {
             <p className="hero-copy">Capture the moment before you miss it.</p>
             <a className="button button--primary hero-button" href={INSTALLER_URL}>
               <span className="download-icon" aria-hidden="true">↓</span>
-              download Klip <strong>v3.0.2</strong>
+              download Klip <strong>v3.0.3</strong>
             </a>
             <div className="hero-meta" aria-label="Product highlights">
               <span>Windows 10 &amp; 11</span>
@@ -173,7 +173,7 @@ export default function Home() {
             <figure className="product-window reveal">
               <div className="product-window-bar">
                 <span><i /> Klip / dashboard</span>
-                <span>v3.0.2</span>
+                <span>v3.0.3</span>
               </div>
               <img src="/klip-dashboard.png" alt="Klip dashboard showing replay, recording, capture source, and audio controls" />
               <figcaption>
@@ -219,7 +219,7 @@ export default function Home() {
         <section className="section download-section post-features-section" id="download">
           <div className="editorial-meta reveal" aria-hidden="true">
             <span>download / windows</span>
-            <span>[ current: v3.0.2 ]</span>
+            <span>[ current: v3.0.3 ]</span>
           </div>
 
           <div className="download-panel reveal">
@@ -271,20 +271,20 @@ export default function Home() {
             <article className="release-card reveal">
               <div className="release-card-header">
                 <div>
-                  <span className="release-version">v3.0.2</span>
-                  <h3>capture quality + interface polish</h3>
+                  <span className="release-version">v3.0.3</span>
+                  <h3>high-frame-rate capture + NVENC stability</h3>
                 </div>
                 <time dateTime="2026-07-21">july 21, 2026</time>
               </div>
               <ul>
-                <li><span>01 / quality</span><p>clips and recordings now hold an exact fixed 30 or 60 fps cadence</p></li>
-                <li><span>02 / quality</span><p>OBS-aligned HQ encoder tuning adds High profile, B-frames, lookahead, and adaptive quantization</p></li>
-                <li><span>03 / color</span><p>explicit BT.709 video-range conversion keeps contrast and color consistent across players</p></li>
-                <li><span>04 / new</span><p>save &amp; apply updates capture settings without restarting Klip</p></li>
-                <li><span>05 / polish</span><p>focused settings modal and professional Inter typography across the app</p></li>
-                <li><span>06 / compatibility</span><p>streamlined 30 and 60 fps presets plus software encoder fallback</p></li>
+                <li><span>01 / new</span><p>optional 120 fps capture for high-refresh gameplay and capable hardware</p></li>
+                <li><span>02 / NVENC</span><p>expanded GPU surface capacity prevents high-throughput sessions from exhausting encoder resources</p></li>
+                <li><span>03 / recovery</span><p>hardware encoding now restarts automatically after transient FFmpeg or driver failures</p></li>
+                <li><span>04 / fallback</span><p>repeated hardware failures move cleanly to the next available encoder instead of leaving capture stuck</p></li>
+                <li><span>05 / quality</span><p>fixed-rate timing, H.264 High profile, and BT.709 output remain enabled at every frame-rate preset</p></li>
+                <li><span>06 / guidance</span><p>120 fps is clearly marked for 120 Hz sources and fast hardware while 60 fps remains recommended</p></li>
               </ul>
-              <a href={INSTALLER_URL}>download v3.0.2 <span aria-hidden="true">↓</span></a>
+              <a href={INSTALLER_URL}>download v3.0.3 <span aria-hidden="true">↓</span></a>
             </article>
           </div>
         </section>

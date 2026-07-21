@@ -35,7 +35,11 @@ EncoderTuning BuildEncoderTuning(const std::string& encoder_name,
       Add(tuning, "spatial-aq", "0");
       Add(tuning, "temporal-aq", "0");
       Add(tuning, "delay", "0");
-      Add(tuning, "surfaces", "4");
+      // External D3D11 textures remain registered with NVENC until the encoder releases them.
+      // Four surfaces is too small for a 60 fps capture pipeline under transient GPU load and
+      // causes avcodec_send_frame() to fail with ENOMEM, followed by EINVAL/EAGAIN. Sixteen keeps
+      // the low-latency preset bounded while leaving enough headroom for capture/encode overlap.
+      Add(tuning, "surfaces", "16");
       Add(tuning, "zerolatency", "1");
     } else {
       // Mirrors OBS's recording-oriented defaults: HQ tuning, P5, quarter-resolution

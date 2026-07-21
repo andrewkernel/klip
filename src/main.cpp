@@ -54,6 +54,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_
         HasCommandLineFlag(command_line, L"--settings-apply-smoke-test");
     const bool software_fallback_smoke_test =
         HasCommandLineFlag(command_line, L"--software-fallback-smoke-test");
+    const bool nvenc_stress_smoke_test =
+        HasCommandLineFlag(command_line, L"--nvenc-stress-smoke-test");
+    const bool high_frame_rate_smoke_test =
+        HasCommandLineFlag(command_line, L"--120fps-smoke-test");
     ProcessApartment apartment;
     av_log_set_level(AV_LOG_ERROR);
     ImGui_ImplWin32_EnableDpiAwareness();
@@ -72,7 +76,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_
                   MB_OK | MB_ICONWARNING);
     }
 
-    if (capture_smoke_test || settings_apply_smoke_test || software_fallback_smoke_test) {
+    if (capture_smoke_test || settings_apply_smoke_test || software_fallback_smoke_test ||
+        nvenc_stress_smoke_test || high_frame_rate_smoke_test) {
       // Exercise the same conservative path on every tester. Vendor prioritization still chooses
       // NVENC, AMF, or Media Foundation from the actual adapter detected by D3D11.
       config.target_mode = klip::CaptureTargetMode::kDisplay;
@@ -95,6 +100,19 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_
       config.live_overlay_enabled = false;
       if (software_fallback_smoke_test)
         config.encoder_preferences = {"h264_mf_software"};
+      if (nvenc_stress_smoke_test) {
+        config.output_width = 1280;
+        config.output_height = 720;
+        config.video_bitrate = 40'000'000;
+        config.encoder_preferences = {"h264_nvenc"};
+      }
+      if (high_frame_rate_smoke_test) {
+        config.target_fps = 120;
+        config.output_width = 1280;
+        config.output_height = 720;
+        config.video_bitrate = 20'000'000;
+        config.encoder_preferences = {"h264_nvenc"};
+      }
     }
 
     // The release workflow runs this from both the installed and portable packages on a clean
@@ -106,13 +124,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_
     klip::KlipApplication application(std::move(config), user_paths.settings_file);
     klip::Error error;
     const bool acceptance_test =
-        capture_smoke_test || settings_apply_smoke_test || software_fallback_smoke_test;
+        capture_smoke_test || settings_apply_smoke_test || software_fallback_smoke_test ||
+        nvenc_stress_smoke_test || high_frame_rate_smoke_test;
     if (!application.Initialize(instance, acceptance_test ? SW_HIDE : show_command, error,
                                 !acceptance_test)) {
       MessageBoxA(nullptr, error.ToString().c_str(), "Klip startup failed", MB_OK | MB_ICONERROR);
       return 1;
     }
     if (settings_apply_smoke_test) return application.RunSettingsAcceptanceTest();
+    if (nvenc_stress_smoke_test)
+      return application.RunCaptureAcceptanceTest("h264_nvenc");
+    if (high_frame_rate_smoke_test)
+      return application.RunCaptureAcceptanceTest("h264_nvenc");
     return (capture_smoke_test || software_fallback_smoke_test)
                ? application.RunCaptureAcceptanceTest()
                : application.Run();

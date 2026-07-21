@@ -131,7 +131,7 @@ To assemble the portable ZIP and installer after building:
 .\packaging\package-win64.ps1 `
   -BuildDirectory .\build\Release `
   -FfmpegRoot .\dependencies\ffmpeg-installed\x64-windows-klip `
-  -Version 3.0.2 `
+  -Version 3.0.3 `
   -VcpkgInstalledDirectory .\build\vcpkg_installed
 ```
 

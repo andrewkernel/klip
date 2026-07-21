@@ -161,7 +161,7 @@ int KlipApplication::Run() {
   return 0;
 }
 
-int KlipApplication::RunCaptureAcceptanceTest() {
+int KlipApplication::RunCaptureAcceptanceTest(std::string required_encoder) {
   if (!initialized_.load(std::memory_order_acquire)) return 1;
 
   logger_.Info("CAPTURE ACCEPTANCE STARTED");
@@ -199,7 +199,8 @@ int KlipApplication::RunCaptureAcceptanceTest() {
                              ? 0ULL
                              : std::filesystem::file_size(finished.last_saved_recording,
                                                           file_error);
-      if (!file_error && bytes >= 64ULL * 1024ULL) {
+      if (!file_error && bytes >= 64ULL * 1024ULL &&
+          (required_encoder.empty() || selected_encoder == required_encoder)) {
         logger_.Info("CAPTURE ACCEPTANCE PASSED encoder=" + selected_encoder +
                      " bytes=" + std::to_string(bytes) +
                      " file=" + finished.last_saved_recording.string());
@@ -210,7 +211,10 @@ int KlipApplication::RunCaptureAcceptanceTest() {
       Error error{ErrorComponent::kApplication,
                   "capture acceptance test",
                   file_error ? file_error.message()
-                             : "recording did not produce a complete MP4 of at least 64 KiB",
+                             : !required_encoder.empty() && selected_encoder != required_encoder
+                                   ? "capture fell back from the required encoder " +
+                                         required_encoder + " to " + selected_encoder
+                                   : "recording did not produce a complete MP4 of at least 64 KiB",
                   file_error.value(),
                   file_error.message(),
                   finished.last_saved_recording.string()};

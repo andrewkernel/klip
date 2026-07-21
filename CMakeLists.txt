@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(Klip VERSION 3.0.2 LANGUAGES CXX)
+project(Klip VERSION 3.0.3 LANGUAGES CXX)
 
 option(KLIP_BUILD_TESTS "Build deterministic Klip core tests" ON)
 option(KLIP_BUILD_APP "Build the Windows capture application" ON)

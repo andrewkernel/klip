@@ -51,7 +51,8 @@ class VideoEncoder {
   bool CreateFramesContext(std::uint32_t width, std::uint32_t height, Error& error);
   bool EnsureOpen(std::uint32_t width, std::uint32_t height, Error& error);
   bool TryOpen(const std::string& name, std::uint32_t width, std::uint32_t height, Error& error);
-  void Drain(std::int64_t fallback_pts);
+  int Drain(std::int64_t fallback_pts);
+  void RecoverFromRuntimeFailure();
   void NormalizeTimestamps(AVPacket* packet, std::int64_t fallback_pts);
   void FlushLocked() noexcept;
   void ReleaseCodec() noexcept;
@@ -73,6 +74,7 @@ class VideoEncoder {
   std::uint32_t height_ = 0;
   std::string active_encoder_;
   std::vector<std::string> runtime_rejected_encoders_;
+  std::vector<std::string> runtime_recovery_attempted_encoders_;
   std::int64_t last_pts_ = AV_NOPTS_VALUE;
   std::int64_t last_dts_ = AV_NOPTS_VALUE;
   bool force_keyframe_ = true;

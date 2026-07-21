@@ -263,9 +263,6 @@ bool LoadConfig(const std::filesystem::path& path, AppConfig& config, std::strin
     }
   }
 
-  // 120 fps was offered by pre-3.0.1 builds but proved too hardware-specific for a safe
-  // default. Migrate those existing settings instead of making an older installation fail.
-  if (loaded.target_fps == 120) loaded.target_fps = 60;
   const auto issues = ValidateConfig(loaded);
   if (!issues.empty()) {
     diagnostic = "Invalid saved setting '" + issues.front().field + "': " +

@@ -49,7 +49,7 @@ void TestConfig() {
 
   klip::AppConfig high_frame_rate;
   high_frame_rate.target_fps = 120;
-  CHECK(!klip::ValidateConfig(high_frame_rate).empty());
+  CHECK(klip::ValidateConfig(high_frame_rate).empty());
   high_frame_rate.target_fps = 144;
   CHECK(!klip::ValidateConfig(high_frame_rate).empty());
 
@@ -218,7 +218,7 @@ void TestFrameRatePersistence() {
   klip::AppConfig loaded;
   std::string diagnostic;
   CHECK(klip::LoadConfig(path, loaded, diagnostic));
-  CHECK(loaded.target_fps == 60);
+  CHECK(loaded.target_fps == 120);
   CHECK(loaded.hotkeys.save_modifiers ==
         (klip::HotkeyConfig::kControl | klip::HotkeyConfig::kNoRepeat));
   CHECK(loaded.hotkeys.record_modifiers == loaded.hotkeys.save_modifiers);
@@ -331,6 +331,7 @@ void TestEncoderTuning() {
   CHECK(nvenc_performance.max_b_frames == 0);
   CHECK(nvenc_performance.low_delay);
   CHECK(OptionValue(nvenc_performance, "tune") == "ll");
+  CHECK(OptionValue(nvenc_performance, "surfaces") == "16");
   CHECK(OptionValue(nvenc_performance, "zerolatency") == "1");
 
   const auto amf_balanced =

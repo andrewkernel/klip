@@ -35,7 +35,7 @@ class KlipApplication {
   bool Initialize(HINSTANCE instance, int show_command, Error& error,
                   bool register_hotkeys = true);
   int Run();
-  int RunCaptureAcceptanceTest();
+  int RunCaptureAcceptanceTest(std::string required_encoder = {});
   int RunSettingsAcceptanceTest();
   void Shutdown() noexcept;
 
