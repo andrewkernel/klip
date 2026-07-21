@@ -4,6 +4,10 @@ Klip is a focused Win64 game recorder: keep a rolling replay buffer, save the mo
 that just happened, or record a full session. There is deliberately no streaming stack,
 scene compositor, browser source, or plugin host competing for system resources.
 
+## Demo Video
+
+https://x.com/andrew1x_/status/2079314121766396172
+
 ## What it does
 
 - Captures a selected game/window or an entire display with Windows Graphics Capture.
