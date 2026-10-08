@@ -2,14 +2,12 @@ import assert from "node:assert/strict";
 import { access, readFile, stat } from "node:fs/promises";
 import test from "node:test";
 
-const root = new URL("../", import.meta.url);
-
-async function render() {
+async function render(path = "/") {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
   return worker.fetch(
-    new Request("https://klip.example/", { headers: { accept: "text/html" } }),
+    new Request(`https://klip.example${path}`, { headers: { accept: "text/html" } }),
     { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
     { waitUntil() {}, passThroughOnException() {} },
   );
@@ -57,6 +55,14 @@ test("download route targets the published 2.0.0 files", async () => {
   assert.match(route, /Klip-2\.0\.0-win64-setup\.exe/);
   assert.match(route, /Klip-2\.0\.0-win64-portable\.zip/);
   assert.doesNotMatch(route, /Klip-0\.3\.0/);
+});
+
+test("unknown and prototype-named downloads are rejected", async () => {
+  for (const query of ["", "?artifact=unknown", "?artifact=__proto__", "?artifact=toString"]) {
+    const response = await render(`/api/download${query}`);
+    assert.equal(response.status, 400);
+    assert.equal(response.headers.get("location"), null);
+  }
 });
 
 test("download counter uses the hosted D1 database", async () => {

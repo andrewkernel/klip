@@ -44,3 +44,4 @@ next-env.d.ts
 .vite/
 pnpm-lock.yaml
 pnpm-workspace.yaml
+*.tsbuildinfo

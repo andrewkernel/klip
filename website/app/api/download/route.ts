@@ -6,9 +6,11 @@ const targets = {
 } as const;
 
 export async function GET(request: Request) {
-  const artifact = new URL(request.url).searchParams.get("artifact") as keyof typeof targets | null;
-  const destination = artifact ? targets[artifact] : undefined;
-  if (!destination) return Response.json({ error: "Unknown download artifact" }, { status: 400 });
+  const artifact = new URL(request.url).searchParams.get("artifact");
+  if (artifact !== "installer" && artifact !== "portable") {
+    return Response.json({ error: "Unknown download artifact" }, { status: 400 });
+  }
+  const destination = targets[artifact];
   try {
     await incrementDownload(artifact);
   } catch (error) {

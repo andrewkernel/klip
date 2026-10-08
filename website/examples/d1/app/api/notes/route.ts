@@ -17,7 +17,7 @@ function toRouteErrorMessage(error: unknown) {
 
 export async function GET() {
   try {
-    const db = getDb();
+    const db = await getDb();
     const rows = await db
       .select()
       .from(notes)
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
       return Response.json({ error: "title is required" }, { status: 400 });
     }
 
-    const db = getDb();
+    const db = await getDb();
     const [note] = await db.insert(notes).values({ title, content }).returning();
     return Response.json({ note }, { status: 201 });
   } catch (error) {

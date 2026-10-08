@@ -2,6 +2,7 @@ param(
   [ValidateSet('game','display')][string]$Mode='game',
   [ValidateSet('Debug','Release')][string]$Configuration='Release',
   [ValidatePattern('^[a-zA-Z0-9_-]{0,50}$')][string]$BuildSuffix='',
+  [string]$Executable='',
   [ValidateSet(60,120)][int]$Fps=60,
   [ValidateSet(60,120,240)][int]$SourceFps=60,
   [ValidateSet('balanced','performance','quality')][string]$EncoderQuality='balanced',
@@ -67,7 +68,7 @@ try {
     Start-Sleep -Milliseconds 500
   }
   $buildName="build-obs-$Configuration" + $(if($BuildSuffix){"-$BuildSuffix"}else{''})
-  $exe=Join-Path $repo "$buildName/bin/64bit/Klip.exe"
+  $exe=if($Executable){(Resolve-Path -LiteralPath $Executable).Path}else{Join-Path $repo "$buildName/bin/64bit/Klip.exe"}
   $arguments=if($GlobalHotkeys){'--configured-capture-smoke-test --hotkey-input-smoke-test'}else{'--configured-capture-smoke-test'}
   if($SaveOnShutdown){$arguments='--configured-capture-smoke-test --obs-save-shutdown-smoke-test'}
   if($DestinationLoss){$arguments='--configured-capture-smoke-test --obs-save-failure-smoke-test'}
