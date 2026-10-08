@@ -1,6 +1,7 @@
 #include "klip/buffer/rolling_media_buffer.h"
 
 #include <algorithm>
+#include <exception>
 
 #include "klip/core/clip_selection.h"
 
@@ -9,12 +10,17 @@ namespace klip {
 RollingMediaBuffer::RollingMediaBuffer(double maximum_seconds, std::size_t maximum_bytes)
     : maximum_seconds_(maximum_seconds), maximum_bytes_(maximum_bytes) {}
 
-bool RollingMediaBuffer::Push(const AVPacket* packet, StreamKind kind, AVRational time_base) {
+bool RollingMediaBuffer::Push(const AVPacket* packet, StreamKind kind, AVRational time_base,
+                              Error& error) {
   if (packet == nullptr) {
+    error = Error{ErrorComponent::kRollingBuffer, "retain encoded packet",
+                  "encoder returned a null packet"};
     return false;
   }
   PacketPtr clone(av_packet_clone(packet));
   if (!clone) {
+    error = Error{ErrorComponent::kRollingBuffer, "clone encoded packet",
+                  "av_packet_clone failed; replay history was reset"};
     return false;
   }
 
@@ -22,21 +28,28 @@ bool RollingMediaBuffer::Push(const AVPacket* packet, StreamKind kind, AVRationa
   EncodedPacket encoded{std::move(clone), kind, time_base};
   const auto descriptor = DescribePacket(encoded);
   std::scoped_lock lock(mutex_);
-  packets_.push_back(std::move(encoded));
-  bytes_ += packet_bytes;
-  if (kind == StreamKind::kVideo) {
-    if (!has_video_) first_video_pts_100ns_ = descriptor.pts_100ns;
-    last_video_pts_100ns_ = descriptor.pts_100ns;
-    has_video_ = true;
+  try {
+    packets_.push_back(std::move(encoded));
+    bytes_ += packet_bytes;
+    if (kind == StreamKind::kVideo) {
+      if (!has_video_) first_video_pts_100ns_ = descriptor.pts_100ns;
+      last_video_pts_100ns_ = descriptor.pts_100ns;
+      has_video_ = true;
+    }
+    EvictLocked();
+  } catch (const std::exception& exception) {
+    error = Error{ErrorComponent::kRollingBuffer, "retain encoded packet",
+                  std::string("could not retain packet: ") + exception.what()};
+    return false;
   }
-  EvictLocked();
   return true;
 }
 
-std::vector<EncodedPacket> RollingMediaBuffer::Snapshot(double seconds) const {
-  std::vector<EncodedPacket> result;
-  std::vector<PacketDescriptor> descriptors;
-  {
+bool RollingMediaBuffer::Snapshot(double seconds, std::vector<EncodedPacket>& result,
+                                  Error& error) const {
+  result.clear();
+  try {
+    std::vector<PacketDescriptor> descriptors;
     std::scoped_lock lock(mutex_);
     descriptors.reserve(packets_.size());
     for (const auto& packet : packets_) {
@@ -44,7 +57,7 @@ std::vector<EncodedPacket> RollingMediaBuffer::Snapshot(double seconds) const {
     }
     const auto range = SelectClipRange(descriptors, seconds);
     if (range.Empty()) {
-      return {};
+      return true;
     }
     std::int64_t clip_start = descriptors[range.begin].pts_100ns;
     for (std::size_t index = range.begin; index < range.end; ++index) {
@@ -64,15 +77,31 @@ std::vector<EncodedPacket> RollingMediaBuffer::Snapshot(double seconds) const {
       }
       const auto& packet = packets_[index];
       PacketPtr clone(packet.packet ? av_packet_clone(packet.packet.get()) : nullptr);
-      if (clone) {
-        result.push_back(EncodedPacket{std::move(clone), packet.kind, packet.time_base});
+      if (!clone) {
+        result.clear();
+        error = Error{ErrorComponent::kRollingBuffer, "snapshot replay packets",
+                      "packet cloning failed; refusing to save an incomplete clip"};
+        return false;
       }
+      result.push_back(EncodedPacket{std::move(clone), packet.kind, packet.time_base});
     }
+  } catch (const std::exception& exception) {
+    result.clear();
+    error = Error{ErrorComponent::kRollingBuffer, "snapshot replay packets",
+                  std::string("could not create a complete replay snapshot: ") + exception.what()};
+    return false;
   }
-  std::stable_sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
-    return DescribePacket(left).dts_100ns < DescribePacket(right).dts_100ns;
-  });
-  return result;
+  try {
+    std::stable_sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
+      return DescribePacket(left).dts_100ns < DescribePacket(right).dts_100ns;
+    });
+  } catch (const std::exception& exception) {
+    result.clear();
+    error = Error{ErrorComponent::kRollingBuffer, "sort replay snapshot",
+                  std::string("could not order a complete replay snapshot: ") + exception.what()};
+    return false;
+  }
+  return true;
 }
 
 RollingBufferStats RollingMediaBuffer::Stats() const {

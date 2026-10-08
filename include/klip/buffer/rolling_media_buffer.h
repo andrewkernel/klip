@@ -6,6 +6,7 @@
 #include <mutex>
 #include <vector>
 
+#include "klip/core/error.h"
 #include "klip/media/packet.h"
 
 namespace klip {
@@ -23,8 +24,9 @@ class RollingMediaBuffer {
   RollingMediaBuffer(const RollingMediaBuffer&) = delete;
   RollingMediaBuffer& operator=(const RollingMediaBuffer&) = delete;
 
-  bool Push(const AVPacket* packet, StreamKind kind, AVRational time_base);
-  [[nodiscard]] std::vector<EncodedPacket> Snapshot(double seconds) const;
+  bool Push(const AVPacket* packet, StreamKind kind, AVRational time_base, Error& error);
+  [[nodiscard]] bool Snapshot(double seconds, std::vector<EncodedPacket>& packets,
+                              Error& error) const;
   [[nodiscard]] RollingBufferStats Stats() const;
   void Reconfigure(double maximum_seconds, std::size_t maximum_bytes);
   void Clear();

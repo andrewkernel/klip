@@ -5,6 +5,9 @@
 #define AppPublisher "Andrewkernel"
 #define AppUrl "https://github.com/andrewkernel/klip"
 #define AppExeName "Klip.exe"
+#ifndef AppRelativeExe
+  #define AppRelativeExe "Klip.exe"
+#endif
 #ifndef BuildRoot
   #define BuildRoot "..\build\Release"
 #endif
@@ -26,7 +29,7 @@ VersionInfoCopyright=Copyright (C) 2026 Andrewkernel
 DefaultDirName={localappdata}\Programs\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
-UninstallDisplayIcon={app}\{#AppExeName}
+UninstallDisplayIcon={app}\{#AppRelativeExe}
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 Compression=lzma2/ultra64
@@ -38,7 +41,7 @@ PrivilegesRequired=lowest
 MinVersion=10.0.18362
 CloseApplications=yes
 RestartApplications=no
-AppMutex=Andrewkernel.Klip
+AppMutex=Andrewkernel.Klip,Local\Klip.Libobs.Engine
 LicenseFile={#BuildRoot}\EULA.txt
 SetupIconFile=..\assets\klip.ico
 WizardImageStretch=no
@@ -53,8 +56,8 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 Source: "{#BuildRoot}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppRelativeExe}"; WorkingDir: "{app}"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppRelativeExe}"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#AppRelativeExe}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent

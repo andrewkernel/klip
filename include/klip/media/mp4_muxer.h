@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <filesystem>
-#include <string>
 
 #include "klip/core/error.h"
 #include "klip/media/packet.h"
@@ -27,7 +26,6 @@ class Mp4Muxer {
   void Abort() noexcept;
 
  private:
-  static std::string Utf8(const std::filesystem::path& path);
   bool CloseFile(Error& error);
 
   AVFormatContext* format_ = nullptr;

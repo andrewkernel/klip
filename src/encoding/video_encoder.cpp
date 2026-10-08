@@ -4,9 +4,10 @@
 #include <limits>
 #include <memory>
 #include <thread>
+#include <utility>
 
-#include "klip/core/encoder_tuning.h"
 #include "klip/core/encoder_selection.h"
+#include "klip/core/encoder_tuning.h"
 
 extern "C" {
 #include <libavutil/hwcontext_d3d11va.h>
@@ -17,6 +18,39 @@ namespace {
 
 struct FrameDeleter {
   void operator()(AVFrame* frame) const noexcept { av_frame_free(&frame); }
+};
+
+class TextureReturnGuard {
+ public:
+  TextureReturnGuard(ID3D11Texture2D* texture, std::uint32_t width, std::uint32_t height,
+                     VideoEncoder::TextureRecycler recycler) noexcept
+      : texture_(texture), width_(width), height_(height), recycler_(std::move(recycler)) {}
+  ~TextureReturnGuard() noexcept { Return(true); }
+
+  TextureReturnGuard(const TextureReturnGuard&) = delete;
+  TextureReturnGuard& operator=(const TextureReturnGuard&) = delete;
+
+  void Return(bool reusable) noexcept {
+    if (!armed_) return;
+    armed_ = false;
+    if (texture_ == nullptr || !recycler_) return;
+    texture_->AddRef();
+    try {
+      recycler_(texture_, width_, height_, reusable);
+    } catch (...) {
+      texture_->Release();
+    }
+  }
+
+  void Transfer() noexcept { armed_ = false; }
+  const VideoEncoder::TextureRecycler& Recycler() const noexcept { return recycler_; }
+
+ private:
+  ID3D11Texture2D* texture_ = nullptr;
+  std::uint32_t width_ = 0;
+  std::uint32_t height_ = 0;
+  VideoEncoder::TextureRecycler recycler_;
+  bool armed_ = true;
 };
 
 }  // namespace
@@ -35,7 +69,7 @@ VideoEncoder::~VideoEncoder() noexcept { Shutdown(); }
 
 bool VideoEncoder::Initialize(ID3D11Device* device, ID3D11DeviceContext* context,
                               std::uint32_t adapter_vendor_id, const AppConfig& config,
-                              Error& error) {
+                              Error& error, bool inject_runtime_failure) {
   Shutdown();
   if (device == nullptr || context == nullptr) {
     error =
@@ -48,7 +82,31 @@ bool VideoEncoder::Initialize(ID3D11Device* device, ID3D11DeviceContext* context
   config_ = config;
   runtime_rejected_encoders_.clear();
   runtime_recovery_attempted_encoders_.clear();
-  return CreateHardwareDevice(error);
+  hardware_device_failure_.clear();
+  runtime_failed_encoder_.clear();
+  runtime_failure_details_.clear();
+#if defined(KLIP_ENABLE_TEST_HOOKS)
+  inject_runtime_failure_ = inject_runtime_failure;
+  injected_runtime_failures_remaining_ = inject_runtime_failure ? 2U : 0U;
+#else
+  (void)inject_runtime_failure;
+#endif
+  state_.SetEncoderStatus("Checking available video encoders");
+  const bool software_only =
+      !config_.encoder_preferences.empty() &&
+      std::all_of(config_.encoder_preferences.begin(), config_.encoder_preferences.end(),
+                  [](const auto& name) { return name == "h264_mf_software"; });
+  if (software_only) {
+    logger_.Info("Video encoder policy is software-only; skipping D3D11 encoder initialization");
+    return true;
+  }
+  Error hardware_error;
+  if (!CreateHardwareDevice(hardware_error)) {
+    hardware_device_failure_ = hardware_error.ToString();
+    logger_.Warning(hardware_error.ToString() +
+                    "; hardware encoders will be skipped and software fallback will be tried");
+  }
+  return true;
 }
 
 void VideoEncoder::Shutdown() noexcept {
@@ -75,6 +133,11 @@ void VideoEncoder::RestartTimeline() noexcept {
   ReleaseCodec();
 }
 
+void VideoEncoder::RequestKeyframe() {
+  std::scoped_lock lock(mutex_);
+  force_keyframe_ = true;
+}
+
 bool VideoEncoder::Prepare(std::uint32_t width, std::uint32_t height, Error& error) {
   std::scoped_lock lock(mutex_);
   return EnsureOpen(width, height, error);
@@ -83,9 +146,23 @@ bool VideoEncoder::Prepare(std::uint32_t width, std::uint32_t height, Error& err
 bool VideoEncoder::Encode(ID3D11Texture2D* texture, std::uint32_t width, std::uint32_t height,
                           std::int64_t pts_100ns, TextureRecycler recycler, Error& error) {
   std::scoped_lock lock(mutex_);
+  TextureReturnGuard return_texture(texture, width, height, std::move(recycler));
   if (!EnsureOpen(width, height, error) || texture == nullptr) {
     return false;
   }
+
+#if defined(KLIP_ENABLE_TEST_HOOKS)
+  if (inject_runtime_failure_ && active_encoder_ == "h264_nvenc" &&
+      injected_runtime_failures_remaining_ > 0 &&
+      submitted_frames_.load(std::memory_order_acquire) >= 120) {
+    --injected_runtime_failures_remaining_;
+    error = Error{ErrorComponent::kVideoEncoder, "submit video frame",
+                  "test-only injected NVENC runtime failure"};
+    logger_.Warning("TEST: injecting NVENC runtime failure");
+    RecoverFromRuntimeFailure(error);
+    return false;
+  }
+#endif
 
   std::unique_ptr<AVFrame, FrameDeleter> frame(av_frame_alloc());
   if (!frame) {
@@ -100,12 +177,24 @@ bool VideoEncoder::Encode(ID3D11Texture2D* texture, std::uint32_t width, std::ui
   frame->pts = codec_pts;
   if (force_keyframe_) frame->pict_type = AV_PICTURE_TYPE_I;
   if (codec_->pix_fmt == AV_PIX_FMT_D3D11) {
+    const auto found = std::find_if(registered_textures_.begin(), registered_textures_.end(),
+                                    [texture](const auto& item) { return item.get() == texture; });
+    if (found == registered_textures_.end()) {
+      if (registered_textures_.size() >= 64) {
+        error = Error{ErrorComponent::kVideoEncoder, "retain encoder texture",
+                      "encoder texture pool exhausted; input surfaces must be reused"};
+        return false;
+      }
+      winrt::com_ptr<ID3D11Texture2D> retained;
+      retained.copy_from(texture);
+      registered_textures_.push_back(std::move(retained));
+    }
     if (hardware_frames_ != nullptr) {
       frame->hw_frames_ctx = av_buffer_ref(hardware_frames_);
     }
 
+    auto* cookie = new RecycleCookie{return_texture.Recycler(), texture, width, height};
     texture->AddRef();
-    auto* cookie = new RecycleCookie{std::move(recycler), texture, width, height};
     frame->data[0] = reinterpret_cast<std::uint8_t*>(texture);
     frame->data[1] = nullptr;
     frame->buf[0] = av_buffer_create(reinterpret_cast<std::uint8_t*>(texture),
@@ -117,6 +206,7 @@ bool VideoEncoder::Encode(ID3D11Texture2D* texture, std::uint32_t width, std::ui
                     "av_buffer_create returned null"};
       return false;
     }
+    return_texture.Transfer();
   } else {
     frame->format = AV_PIX_FMT_NV12;
     const auto allocate_result = av_frame_get_buffer(frame.get(), 32);
@@ -137,12 +227,12 @@ bool VideoEncoder::Encode(ID3D11Texture2D* texture, std::uint32_t width, std::ui
       staging.Usage = D3D11_USAGE_STAGING;
       staging.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
       staging_texture_ = nullptr;
-      const auto create_result = device_->CreateTexture2D(&staging, nullptr,
-                                                           staging_texture_.put());
+      const auto create_result =
+          device_->CreateTexture2D(&staging, nullptr, staging_texture_.put());
       if (FAILED(create_result)) {
-        error = MakeHresultError(ErrorComponent::kVideoEncoder,
-                                 "allocate fallback readback texture", create_result,
-                                 active_encoder_);
+        error =
+            MakeHresultError(ErrorComponent::kVideoEncoder, "allocate fallback readback texture",
+                             create_result, active_encoder_);
         return false;
       }
       staging_width_ = width;
@@ -155,6 +245,9 @@ bool VideoEncoder::Encode(ID3D11Texture2D* texture, std::uint32_t width, std::ui
     if (FAILED(map_result)) {
       error = MakeHresultError(ErrorComponent::kVideoEncoder, "read fallback video frame",
                                map_result, active_encoder_);
+      // CopyResource was submitted, but Map did not prove completion. Retire the surface instead
+      // of allowing a later conversion to overwrite it while the readback may still be pending.
+      return_texture.Return(false);
       return false;
     }
     const auto* source = static_cast<const std::uint8_t*>(mapped.pData);
@@ -171,11 +264,7 @@ bool VideoEncoder::Encode(ID3D11Texture2D* texture, std::uint32_t width, std::ui
 
     // The GPU copy is complete before Map returns. Return this texture to the capture pool now;
     // software encoding owns the AVFrame buffer rather than the D3D11 allocation.
-    texture->AddRef();
-    if (recycler)
-      recycler(texture, width, height);
-    else
-      texture->Release();
+    return_texture.Return(true);
   }
 
   auto result = avcodec_send_frame(codec_, frame.get());
@@ -193,15 +282,16 @@ bool VideoEncoder::Encode(ID3D11Texture2D* texture, std::uint32_t width, std::ui
   if (result < 0) {
     error = MakeFfmpegError(ErrorComponent::kVideoEncoder, "submit video frame", result,
                             active_encoder_);
-    RecoverFromRuntimeFailure();
+    RecoverFromRuntimeFailure(error);
     return false;
   }
+  submitted_frames_.fetch_add(1, std::memory_order_release);
   force_keyframe_ = false;
   const auto drain_result = Drain(codec_pts);
   if (drain_result < 0) {
-    error = MakeFfmpegError(ErrorComponent::kVideoEncoder, "receive encoded packet",
-                            drain_result, active_encoder_);
-    RecoverFromRuntimeFailure();
+    error = MakeFfmpegError(ErrorComponent::kVideoEncoder, "receive encoded packet", drain_result,
+                            active_encoder_);
+    RecoverFromRuntimeFailure(error);
     return false;
   }
   return true;
@@ -227,7 +317,7 @@ void VideoEncoder::ReleaseTexture(void* opaque, std::uint8_t*) noexcept {
     return;
   }
   if (cookie->recycler) {
-    cookie->recycler(cookie->texture, cookie->width, cookie->height);
+    cookie->recycler(cookie->texture, cookie->width, cookie->height, true);
   } else {
     cookie->texture->Release();
   }
@@ -250,6 +340,7 @@ bool VideoEncoder::CreateHardwareDevice(Error& error) {
   if (result < 0) {
     error =
         MakeFfmpegError(ErrorComponent::kVideoEncoder, "initialize D3D11 hardware device", result);
+    av_buffer_unref(&hardware_device_);
     return false;
   }
   return true;
@@ -300,11 +391,16 @@ bool VideoEncoder::EnsureOpen(std::uint32_t width, std::uint32_t height, Error& 
   FlushLocked();
   if (replacing_codec) router_.ResetTimeline();
   ReleaseCodec();
-  Error frames_error;
-  if (!CreateFramesContext(width, height, frames_error)) {
-    logger_.Warning(frames_error.ToString() + "; trying direct D3D11 texture input");
+  if (hardware_device_ != nullptr) {
+    Error frames_error;
+    if (!CreateFramesContext(width, height, frames_error)) {
+      logger_.Warning(frames_error.ToString() + "; trying direct D3D11 texture input");
+    }
   }
 
+  std::vector<std::string> rejected_attempts;
+  std::string rejected_candidate;
+  std::string rejected_reason;
   for (const auto& candidate : BuildPreference()) {
     Error candidate_error;
     if (TryOpen(candidate, width, height, candidate_error)) {
@@ -313,14 +409,46 @@ bool VideoEncoder::EnsureOpen(std::uint32_t width, std::uint32_t height, Error& 
       failed_height_ = 0;
       last_open_error_ = {};
       state_.SetEncoder(candidate);
-      state_.ClearError();
+      state_.ClearError(ErrorComponent::kVideoEncoder);
       logger_.Info("Selected video encoder: " + candidate);
+      if (candidate == runtime_failed_encoder_ &&
+          std::find(runtime_rejected_encoders_.begin(), runtime_rejected_encoders_.end(),
+                    candidate) == runtime_rejected_encoders_.end()) {
+        logger_.Info("Video encoder recovered after restart: " + candidate);
+        runtime_failed_encoder_.clear();
+        runtime_failure_details_.clear();
+      }
+      if (rejected_candidate.empty() && hardware_device_failure_.empty() &&
+          runtime_failure_details_.empty()) {
+        state_.SetEncoderStatus({});
+      } else {
+        std::string reason = !runtime_failure_details_.empty() ? runtime_failure_details_
+                             : !rejected_candidate.empty()
+                                 ? rejected_candidate + " was unavailable: " + rejected_reason
+                                 : hardware_device_failure_;
+        const bool software_fallback = candidate == "h264_mf_software";
+        const std::string status =
+            std::string(software_fallback ? "Software compatibility fallback active: "
+                                          : "Encoder fallback active: ") +
+            candidate + " selected after " + reason +
+            (software_fallback
+                 ? ". CPU usage may be higher and affect frame pacing. For more headroom, enable "
+                   "Performance mode (720p/60) or lower resolution/FPS."
+                 : ".");
+        state_.SetEncoderStatus(status);
+        logger_.Warning(status);
+      }
       return true;
     }
     logger_.Warning(candidate_error.ToString());
+    rejected_attempts.push_back(candidate + ": " + candidate_error.ToString());
+    if (rejected_candidate.empty()) {
+      rejected_candidate = candidate;
+      rejected_reason = candidate_error.ToString();
+    }
   }
   error = Error{ErrorComponent::kVideoEncoder, "select encoder",
-                "no available H.264 encoder accepted the capture input"};
+                FormatEncoderSelectionFailure(rejected_attempts)};
   last_open_error_ = error;
   failed_width_ = width;
   failed_height_ = height;
@@ -331,6 +459,15 @@ bool VideoEncoder::EnsureOpen(std::uint32_t width, std::uint32_t height, Error& 
 bool VideoEncoder::TryOpen(const std::string& name, std::uint32_t width, std::uint32_t height,
                            Error& error) {
   const bool software_fallback = name == "h264_mf_software";
+  if (!software_fallback && hardware_device_ == nullptr) {
+    error = Error{ErrorComponent::kVideoEncoder,
+                  "open encoder",
+                  "D3D11 hardware encoding is unavailable; selecting the software fallback",
+                  {},
+                  {},
+                  name};
+    return false;
+  }
   const char* codec_name = software_fallback ? "h264_mf" : name.c_str();
   const auto* encoder = avcodec_find_encoder_by_name(codec_name);
   if (encoder == nullptr) {
@@ -385,6 +522,11 @@ bool VideoEncoder::TryOpen(const std::string& name, std::uint32_t width, std::ui
   for (const auto& [key, value] : tuning.options)
     av_dict_set(&options, key.c_str(), value.c_str(), 0);
   const auto result = avcodec_open2(context, encoder, &options);
+  for (const AVDictionaryEntry* option = nullptr;
+       (option = av_dict_get(options, "", option, AV_DICT_IGNORE_SUFFIX)) != nullptr;) {
+    logger_.Warning("Encoder '" + name + "' did not accept tuning option '" + option->key +
+                    "'; using its backend default for this option");
+  }
   av_dict_free(&options);
   if (result < 0) {
     error = MakeFfmpegError(ErrorComponent::kVideoEncoder, "open encoder", result, name);
@@ -426,11 +568,12 @@ int VideoEncoder::Drain(std::int64_t fallback_pts) {
     }
     NormalizeTimestamps(packet.get(), fallback_pts);
     router_.Publish(packet.get(), StreamKind::kVideo, codec_->time_base);
+    emitted_frames_.fetch_add(1, std::memory_order_release);
     av_packet_unref(packet.get());
   }
 }
 
-void VideoEncoder::RecoverFromRuntimeFailure() {
+void VideoEncoder::RecoverFromRuntimeFailure(const Error& failure) {
   if (active_encoder_.empty()) return;
   const auto failed_encoder = active_encoder_;
   const auto recovery = std::find(runtime_recovery_attempted_encoders_.begin(),
@@ -438,14 +581,20 @@ void VideoEncoder::RecoverFromRuntimeFailure() {
   if (recovery == runtime_recovery_attempted_encoders_.end()) {
     runtime_recovery_attempted_encoders_.push_back(failed_encoder);
     logger_.Warning("Video encoder failed at runtime; restarting once: " + failed_encoder);
+    runtime_failed_encoder_ = failed_encoder;
+    runtime_failure_details_ = failed_encoder + " / " + failure.ToString();
+    state_.SetEncoderStatus("Encoder " + failed_encoder + " failed; retrying once");
   } else if (std::find(runtime_rejected_encoders_.begin(), runtime_rejected_encoders_.end(),
                        failed_encoder) == runtime_rejected_encoders_.end()) {
     runtime_rejected_encoders_.push_back(failed_encoder);
     logger_.Warning("Video encoder failed again; trying fallback: " + failed_encoder);
+    runtime_failure_details_ = failed_encoder + " / " + failure.ToString();
+    state_.SetEncoderStatus("Encoder " + failed_encoder + " failed again; switching to fallback");
   }
-  // An AVCodecContext is not reusable after ENOMEM/EINVAL from a hardware backend. Clearing the
-  // packet timeline also prevents pre-failure packets from being mixed with the new keyframe.
-  router_.ResetTimeline();
+  // An AVCodecContext is not reusable after ENOMEM/EINVAL from a hardware backend. Clear replay
+  // history so dependent pictures from the failed codec cannot be clipped. Keep recording alive:
+  // all supported encoders still emit H.264, and the reopened codec will begin with a new keyframe.
+  router_.ResetTimeline(false);
   ReleaseCodec();
 }
 
@@ -484,6 +633,7 @@ void VideoEncoder::ReleaseCodec() noexcept {
   if (codec_ != nullptr) {
     avcodec_free_context(&codec_);
   }
+  registered_textures_.clear();
   if (hardware_frames_ != nullptr) {
     av_buffer_unref(&hardware_frames_);
   }
@@ -501,22 +651,23 @@ void VideoEncoder::ReleaseCodec() noexcept {
 }
 
 std::vector<std::string> VideoEncoder::BuildPreference() const {
-  auto preference = PrioritizeEncoders(config_.encoder_preferences, adapter_vendor_id_);
-  preference.erase(std::remove_if(preference.begin(), preference.end(), [&](const auto& name) {
-                     return std::find(runtime_rejected_encoders_.begin(),
-                                      runtime_rejected_encoders_.end(), name) !=
-                            runtime_rejected_encoders_.end();
-                   }),
+  auto preference = FilterEncodersForAdapter(
+      PrioritizeEncoders(config_.encoder_preferences, adapter_vendor_id_), adapter_vendor_id_);
+  preference.erase(std::remove_if(preference.begin(), preference.end(),
+                                  [&](const auto& name) {
+                                    return std::find(runtime_rejected_encoders_.begin(),
+                                                     runtime_rejected_encoders_.end(),
+                                                     name) != runtime_rejected_encoders_.end();
+                                  }),
                    preference.end());
   // Media Foundation provides both a vendor-neutral hardware fallback and a last-resort
   // software transform. Keep both available because a driver-specific backend can open and
   // still reject native capture textures at runtime.
   if (std::find(preference.begin(), preference.end(), "h264_mf") == preference.end() &&
-      std::find(runtime_rejected_encoders_.begin(), runtime_rejected_encoders_.end(),
-                "h264_mf") == runtime_rejected_encoders_.end())
+      std::find(runtime_rejected_encoders_.begin(), runtime_rejected_encoders_.end(), "h264_mf") ==
+          runtime_rejected_encoders_.end())
     preference.push_back("h264_mf");
-  if (std::find(preference.begin(), preference.end(), "h264_mf_software") ==
-          preference.end() &&
+  if (std::find(preference.begin(), preference.end(), "h264_mf_software") == preference.end() &&
       std::find(runtime_rejected_encoders_.begin(), runtime_rejected_encoders_.end(),
                 "h264_mf_software") == runtime_rejected_encoders_.end())
     preference.push_back("h264_mf_software");

@@ -29,7 +29,12 @@ class SpscQueue {
       return false;
     }
     slots_[head].emplace(std::move(value));
-    head_.store(next, std::memory_order_release);
+    {
+      // Publish under the wait mutex so notification cannot slip between the
+      // consumer's empty predicate check and its transition into sleep.
+      std::scoped_lock lock(wait_mutex_);
+      head_.store(next, std::memory_order_release);
+    }
     not_empty_.notify_one();
     return true;
   }
@@ -50,10 +55,8 @@ class SpscQueue {
       return true;
     }
     std::unique_lock lock(wait_mutex_);
-    std::stop_callback wake_on_stop(stop_token, [this] { not_empty_.notify_all(); });
-    not_empty_.wait(lock, [&] {
-      return stop_token.stop_requested() ||
-             tail_.load(std::memory_order_acquire) != head_.load(std::memory_order_acquire);
+    not_empty_.wait(lock, stop_token, [&] {
+      return tail_.load(std::memory_order_acquire) != head_.load(std::memory_order_acquire);
     });
     return !stop_token.stop_requested() && TryPop(value);
   }
@@ -81,7 +84,7 @@ class SpscQueue {
   alignas(64) std::atomic<std::size_t> tail_{0};
   std::atomic<std::uint64_t> dropped_{0};
   std::mutex wait_mutex_;
-  std::condition_variable not_empty_;
+  std::condition_variable_any not_empty_;
 };
 
 template <typename T>
@@ -104,9 +107,7 @@ class BlockingBoundedQueue {
 
   bool WaitPop(T& value, std::stop_token stop_token) {
     std::unique_lock lock(mutex_);
-    std::stop_callback wake_on_stop(stop_token, [this] { not_empty_.notify_all(); });
-    not_empty_.wait(lock,
-                    [&] { return closed_ || !items_.empty() || stop_token.stop_requested(); });
+    not_empty_.wait(lock, stop_token, [&] { return closed_ || !items_.empty(); });
     if (items_.empty()) {
       return false;
     }
@@ -140,7 +141,7 @@ class BlockingBoundedQueue {
  private:
   const std::size_t capacity_;
   mutable std::mutex mutex_;
-  std::condition_variable not_empty_;
+  std::condition_variable_any not_empty_;
   std::deque<T> items_;
   bool closed_ = false;
 };

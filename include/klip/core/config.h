@@ -27,6 +27,7 @@ enum class VideoScalingMode {
 };
 
 struct HotkeyConfig {
+  bool operator==(const HotkeyConfig&) const = default;
   static constexpr unsigned int kAlt = 0x0001;
   static constexpr unsigned int kControl = 0x0002;
   static constexpr unsigned int kShift = 0x0004;
@@ -42,10 +43,22 @@ struct HotkeyConfig {
 };
 
 struct AppConfig {
+  bool obs_replay_enabled = true;
+  std::string obs_encoder_id = "auto";
+  int obs_cq = 18;
+  std::string obs_filename_format = "clip_%CCYY-%MM-%DD_%hh-%mm-%ss";
+  bool obs_separate_audio_tracks = false;
+  int obs_display_method = 0; // OBS monitor_capture: auto=0, DXGI=1, WGC=2.
+  bool obs_limit_game_capture_fps = false; // Opt-in OBS hook copy limiter; never caps the game itself.
   double clip_duration_seconds = 60.0;
   std::uint32_t target_fps = 60;
-  std::uint32_t output_width = 0;   // Zero preserves the capture target width.
-  std::uint32_t output_height = 0;  // Zero preserves the capture target height.
+#if defined(KLIP_USE_LIBOBS)
+  std::uint32_t output_width = 1920;
+  std::uint32_t output_height = 1080;
+#else
+  std::uint32_t output_width = 0;   // Zero locks the first target's width for the media pipeline.
+  std::uint32_t output_height = 0;  // Zero locks the first target's height for the media pipeline.
+#endif
   std::int64_t video_bitrate = 12'000'000;
   std::int64_t audio_bitrate = 192'000;
   bool desktop_audio_enabled = true;

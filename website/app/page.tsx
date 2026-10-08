@@ -14,10 +14,10 @@ const navigation = [
 ];
 
 const featureHighlights = [
-  ["01", "instant replay", "save the last 15–300 seconds with your own shortcut"],
+  ["01", "instant replay", "save recent gameplay with your own shortcut; memory limits may shorten clips"],
   ["02", "full recording", "record complete sessions with a global keybind"],
   ["03", "audio control", "balance desktop and microphone levels before capture"],
-  ["04", "hardware encode", "capture at 30, 60, or 120 fps with NVIDIA, AMD, or Intel"],
+  ["04", "hardware encode", "choose a supported hardware encoder and 60 or 120 fps; compatibility varies by GPU"],
 ];
 
 const steps = [
@@ -133,7 +133,7 @@ export default function Home() {
             <p className="hero-copy">Capture the moment before you miss it.</p>
             <a className="button button--primary hero-button" href={INSTALLER_URL}>
               <span className="download-icon" aria-hidden="true">↓</span>
-              download Klip <strong>v3.0.3</strong>
+              download Klip <strong>2.0 beta</strong>
             </a>
             <div className="hero-meta" aria-label="Product highlights">
               <span>Windows 10 &amp; 11</span>
@@ -157,7 +157,7 @@ export default function Home() {
             <div className="feature-copy reveal">
               <p className="feature-kicker">one focused capture tool</p>
               <h2>the moments<br />matter. <span>the setup<br />doesn&rsquo;t.</span></h2>
-              <p className="feature-lede">Klip keeps replay, full-session recording, source selection, and audio control in one calm dashboard. no scenes, browser sources, plugin host, account, or cloud workflow to configure.</p>
+              <p className="feature-lede">Klip 2.0 brings OBS-powered capture, replay, recording, and audio control into one focused dashboard. no scenes, browser sources, account, or cloud workflow to configure.</p>
 
               <div className="feature-list" aria-label="Klip features">
                 {featureHighlights.map(([number, title, copy]) => (
@@ -173,7 +173,7 @@ export default function Home() {
             <figure className="product-window reveal">
               <div className="product-window-bar">
                 <span><i /> Klip / dashboard</span>
-                <span>v3.0.3</span>
+                <span>2.0 beta</span>
               </div>
               <img src="/klip-dashboard.png" alt="Klip dashboard showing replay, recording, capture source, and audio controls" />
               <figcaption>
@@ -184,8 +184,8 @@ export default function Home() {
           </div>
 
           <div className="feature-footnote reveal">
-            <span>quality stays high</span>
-            <p>the video path stays on the GPU through color conversion and H.264 encoding, while the rolling buffer stores compressed packets instead of raw frames.</p>
+            <span>a new capture foundation</span>
+            <p>stock OBS game capture, hardware encoding, and compressed replay buffering replace the original capture engine. performance mode uses lighter encoder tuning, with an explicit quality tradeoff.</p>
             <a href="#download">download for Windows <span aria-hidden="true">↓</span></a>
           </div>
         </section>
@@ -219,11 +219,11 @@ export default function Home() {
         <section className="section download-section post-features-section" id="download">
           <div className="editorial-meta reveal" aria-hidden="true">
             <span>download / windows</span>
-            <span>[ current: v3.0.3 ]</span>
+            <span>[ current: 2.0 beta ]</span>
           </div>
 
           <div className="download-panel reveal">
-            <div className="release-pill"><span /> available now</div>
+            <div className="release-pill"><span /> public beta</div>
             <h2>ready when<br />you are.</h2>
             <p className="download-lede">install Klip for Windows and start capturing locally. no account, no cloud, no subscription.</p>
 
@@ -238,18 +238,20 @@ export default function Home() {
               <a className="button button--secondary button--large" href={REPOSITORY_URL} target="_blank" rel="noreferrer">
                 view source <span aria-hidden="true">↗</span>
               </a>
+              <a href="https://github.com/andrewkernel/klip/releases/tag/v2.0.0">dependency sources + checksums ↗</a>
             </div>
 
             <div className="requirements">
               <span>Windows 10 1903+</span>
               <span>Windows 11</span>
               <span>x64</span>
-              <span>31.5 MB installer</span>
+              <span>GPL open source</span>
+              <a href="https://aka.ms/vs/17/release/vc_redist.x64.exe">Microsoft VC++ x64 runtime</a>
             </div>
 
             <div className="unsigned-note">
               <span aria-hidden="true">!</span>
-              <p><strong>public beta notice:</strong> this release is currently unsigned, so Windows SmartScreen may ask you to confirm before running the installer.</p>
+              <p><strong>public beta notice:</strong> this build is unsigned. verify its checksum before installing; do not disable Windows security. hardware and game compatibility vary, and broader testing is ongoing. clips and recordings save as MKV.</p>
             </div>
           </div>
         </section>
@@ -271,20 +273,20 @@ export default function Home() {
             <article className="release-card reveal">
               <div className="release-card-header">
                 <div>
-                  <span className="release-version">v3.0.3</span>
-                  <h3>high-frame-rate capture + NVENC stability</h3>
+                  <span className="release-version">Klip 2.0 / v2.0.0 beta</span>
+                  <h3>a new OBS-powered capture engine</h3>
                 </div>
-                <time dateTime="2026-07-21">july 21, 2026</time>
+                <time dateTime="2026-10-07">october 7, 2026</time>
               </div>
               <ul>
-                <li><span>01 / new</span><p>optional 120 fps capture for high-refresh gameplay and capable hardware</p></li>
-                <li><span>02 / NVENC</span><p>expanded GPU surface capacity prevents high-throughput sessions from exhausting encoder resources</p></li>
-                <li><span>03 / recovery</span><p>hardware encoding now restarts automatically after transient FFmpeg or driver failures</p></li>
-                <li><span>04 / fallback</span><p>repeated hardware failures move cleanly to the next available encoder instead of leaving capture stuck</p></li>
-                <li><span>05 / quality</span><p>fixed-rate timing, H.264 High profile, and BT.709 output remain enabled at every frame-rate preset</p></li>
-                <li><span>06 / guidance</span><p>120 fps is clearly marked for 120 Hz sources and fast hardware while 60 fps remains recommended</p></li>
+                <li><span>01 / engine</span><p>stock libobs handles game capture, display capture, audio, encoding, replay buffering, and recording</p></li>
+                <li><span>02 / replay</span><p>save clips while recording, with bounded replay memory and clear duration-limit wording</p></li>
+                <li><span>03 / performance</span><p>hidden and minimized dashboards stop rendering and computing visualization-only audio meters</p></li>
+                <li><span>04 / control</span><p>explicit NVENC performance tuning and an optional game-capture copy limiter; quality tradeoffs are disclosed</p></li>
+                <li><span>05 / files</span><p>MKV clips and recordings, customizable shortcuts, desktop/microphone volume controls, and separate audio tracks</p></li>
+                <li><span>06 / beta</span><p>source and dependency build recipes are available. no universal FPS improvement or OBS-parity guarantee</p></li>
               </ul>
-              <a href={INSTALLER_URL}>download v3.0.3 <span aria-hidden="true">↓</span></a>
+              <a href={INSTALLER_URL}>download Klip 2.0 <span aria-hidden="true">↓</span></a>
             </article>
           </div>
         </section>
@@ -305,7 +307,7 @@ export default function Home() {
             <a href={REPOSITORY_URL} target="_blank" rel="noreferrer">source ↗</a>
             <a href="#changelog">changelog</a>
             <a href="/PRIVACY.md">privacy</a>
-            <a href="/EULA.txt">eula</a>
+            <a href="/LICENSE.txt">license</a>
           </div>
         </div>
       </footer>

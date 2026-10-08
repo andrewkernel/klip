@@ -2,6 +2,7 @@
 
 #include <Windows.h>
 #include <d3d11_4.h>
+#include <dxgi1_6.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Graphics.Capture.h>
 #include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
@@ -43,7 +44,7 @@ class GraphicsCapture {
   GraphicsCapture& operator=(const GraphicsCapture&) = delete;
 
   bool Initialize(ID3D11Device* device, ID3D11DeviceContext* context, HWND application_window,
-                  const AppConfig& config, Error& error);
+                  const AppConfig& config, Error& error, bool force_event_query_sync = false);
   bool Start(Error& error);
   void Stop() noexcept;
   void SetTargetMode(CaptureTargetMode mode);
@@ -70,8 +71,22 @@ class GraphicsCapture {
     std::uint32_t height = 0;
     std::int64_t pts_100ns = 0;
     std::uint64_t fence_value = 0;
+    winrt::com_ptr<ID3D11Query> event_query;
     std::uint64_t generation = 0;
   };
+
+  struct WgcClockTrace {
+    std::int64_t last_source_time_100ns = 0;
+    std::int64_t last_callback_time_100ns = -1;
+    std::int64_t source_interval_min_100ns = INT64_MAX;
+    std::int64_t source_interval_max_100ns = 0;
+    std::int64_t callback_interval_min_100ns = INT64_MAX;
+    std::int64_t callback_interval_max_100ns = 0;
+    std::uint64_t interval_samples = 0;
+    std::uint64_t source_time_regressions = 0;
+  };
+
+  enum class FrameClockMode { kUndetermined, kWgcSource, kCallbackArrival };
 
   enum class TargetKind { kNone, kWindow, kMonitor };
   struct CaptureTarget {
@@ -83,6 +98,8 @@ class GraphicsCapture {
 
   bool CreateInteropDevice(Error& error);
   bool CreateFence(Error& error);
+  bool SignalGpuWork(ConvertedFrame& frame, Error& error);
+  bool WaitForGpuWork(const ConvertedFrame& frame);
   CaptureTarget DetermineTarget();
   bool IsWindowCandidate(HWND window) const;
   void RefreshSourceOptions();
@@ -94,6 +111,8 @@ class GraphicsCapture {
                       const winrt::Windows::Foundation::IInspectable&);
   void OnTargetClosed(const winrt::Windows::Graphics::Capture::GraphicsCaptureItem&,
                       const winrt::Windows::Foundation::IInspectable&);
+  void TraceWgcClock(std::int64_t source_time_100ns, std::int64_t callback_time_100ns) noexcept;
+  void LogTargetAdapter(HMONITOR monitor, bool is_display_capture);
 
   bool EnsureConverter(std::uint32_t width, std::uint32_t height, Error& error);
   bool LoadStaticOverlay(Error& error);
@@ -102,14 +121,18 @@ class GraphicsCapture {
   void OnOverlayFrameArrived(
       const winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool& sender,
       const winrt::Windows::Foundation::IInspectable&);
-  void OnOverlayTargetClosed(
-      const winrt::Windows::Graphics::Capture::GraphicsCaptureItem&,
-      const winrt::Windows::Foundation::IInspectable&);
+  void OnOverlayTargetClosed(const winrt::Windows::Graphics::Capture::GraphicsCaptureItem&,
+                             const winrt::Windows::Foundation::IInspectable&);
   bool Convert(const RawFrame& input, ConvertedFrame& output, Error& error);
   void UpdatePreview(const RawFrame& input) noexcept;
   winrt::com_ptr<ID3D11Texture2D> CreateNv12Texture(std::uint32_t width,
                                                     std::uint32_t height) const;
   winrt::com_ptr<ID3D11Texture2D> AcquireNv12Texture(std::uint32_t width, std::uint32_t height);
+  winrt::com_ptr<ID3D11Texture2D> AcquireEncoderTexture(std::uint32_t width, std::uint32_t height);
+  void RecycleEncoderTexture(ID3D11Texture2D* texture, std::uint32_t width, std::uint32_t height,
+                             bool reusable = true) noexcept;
+  void DiscardEncoderTexture(ID3D11Texture2D* texture, std::uint32_t width,
+                             std::uint32_t height) noexcept;
   void RecycleNv12Texture(ID3D11Texture2D* texture, std::uint32_t width,
                           std::uint32_t height) noexcept;
   winrt::com_ptr<ID3D11Texture2D> TextureFromSurface(
@@ -129,6 +152,7 @@ class GraphicsCapture {
   AppConfig config_;
   HWND application_window_ = nullptr;
   std::atomic<bool> running_{false};
+  std::atomic<bool> capture_target_active_{false};
   std::atomic<bool> recycle_enabled_{false};
   std::atomic<bool> target_dirty_{false};
   std::atomic<bool> preview_enabled_{false};
@@ -139,8 +163,16 @@ class GraphicsCapture {
   std::atomic<std::uint64_t> capture_generation_{1};
   std::atomic<std::uint64_t> fence_counter_{0};
   std::atomic<std::uint64_t> captured_frames_{0};
-  std::atomic<std::uint64_t> encoded_frames_{0};
+  std::atomic<std::uint64_t> source_frames_{0};
+  std::uint64_t unique_submissions_ = 0;
+  std::uint64_t repeated_submissions_ = 0;
+  std::uint64_t skipped_output_slots_ = 0;
+  std::uint64_t failed_submissions_ = 0;
+  WgcClockTrace wgc_clock_trace_;
+  FrameClockMode frame_clock_mode_ = FrameClockMode::kUndetermined;
+  std::atomic<std::uint64_t> submitted_frames_{0};
   std::atomic<std::uint64_t> coalesced_raw_frames_{0};
+  std::atomic<std::uint64_t> coalesced_encode_frames_{0};
   std::int64_t qpc_origin_ = 0;
   std::int64_t qpc_frequency_ = 0;
 
@@ -150,8 +182,15 @@ class GraphicsCapture {
   winrt::com_ptr<ID3D11DeviceContext4> context4_;
   winrt::com_ptr<ID3D11VideoDevice> video_device_;
   winrt::com_ptr<ID3D11VideoContext> video_context_;
+  LUID capture_adapter_luid_{};
+  std::uint32_t capture_adapter_vendor_id_ = 0;
+  std::wstring capture_adapter_name_;
   winrt::com_ptr<ID3D11Fence> fence_;
   ScopedHandle fence_event_;
+  bool use_gpu_fence_ = false;
+  bool force_event_query_sync_ = false;
+  bool capture_trace_enabled_ = false;
+  bool wgc_clock_warning_logged_ = false;
   winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice interop_device_{nullptr};
 
   std::mutex session_mutex_;
@@ -164,6 +203,8 @@ class GraphicsCapture {
   winrt::event_token closed_token_{};
   std::uint32_t current_width_ = 0;
   std::uint32_t current_height_ = 0;
+  std::uint32_t output_width_ = 0;
+  std::uint32_t output_height_ = 0;
 
   std::mutex overlay_session_mutex_;
   HWND overlay_window_ = nullptr;
@@ -180,6 +221,10 @@ class GraphicsCapture {
   std::uint32_t processor_height_ = 0;
   std::mutex texture_pool_mutex_;
   std::vector<winrt::com_ptr<ID3D11Texture2D>> texture_pool_;
+  std::vector<winrt::com_ptr<ID3D11Texture2D>> encoder_texture_pool_;
+  std::size_t encoder_texture_count_ = 0;
+  std::uint32_t encoder_pool_width_ = 0;
+  std::uint32_t encoder_pool_height_ = 0;
   std::uint32_t texture_pool_width_ = 0;
   std::uint32_t texture_pool_height_ = 0;
 

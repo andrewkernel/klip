@@ -1,10 +1,18 @@
 # Klip architecture
 
+An incremental libobs build is available through `tools/build-obs.ps1`.
+`ObsEngine` replaces the entire media pipeline in that build while the existing
+native UI, settings, hotkeys, and application state are reused. Its composition
+root is `src/app/application_obs.cpp`; the legacy composition root below remains
+available during migration. See [the migration plan](libobs-migration.md) and
+[current evidence / remaining gates](libobs-results.md). The shipping default
+has not yet changed.
+
 ## Responsibilities
 
 - `KlipApplication` is the composition root. It validates configuration, performs startup rollback, wires commands, runs the UI loop, and enforces shutdown order.
 - `D3dDevice` owns the shared D3D11 device/context, UI swap chain, render target, and adapter identity.
-- `GraphicsCapture` owns Windows Graphics Capture items, pools, and sessions; BGRA-to-NV12 video processing; the texture pool; GPU fence; and capture/conversion/encode workers.
+- `GraphicsCapture` owns Windows Graphics Capture items, pools, and sessions; BGRA-to-NV12 video processing; the texture pool; GPU fence/event-query synchronization; and capture/conversion/encode workers.
 - `VideoEncoder` owns FFmpeg D3D11 hardware contexts and the H.264 codec context. It discovers candidates, records rejection reasons, submits NV12 textures, normalizes timestamps, and emits encoded video packets.
 - `AudioPipeline` owns WASAPI endpoint discovery, loopback and optional microphone clients, per-device resamplers, bounded source sample queues, and the mixer worker.
 - `AudioEncoder` owns the AAC context and emits timestamped audio packets.
@@ -45,15 +53,15 @@ flowchart LR
 
 All component lifetimes are nested under `KlipApplication`; dependencies are constructor references, not global services. COM interfaces use `winrt::com_ptr`. WinRT capture objects are value wrappers with explicit event-token revocation. Kernel events use `ScopedHandle`. FFmpeg packets and codec parameters use `unique_ptr` deleters. Codec, format, resampler, and hardware contexts have one named owner and explicit no-throw shutdown fallbacks.
 
-The D3D device is intentionally shared by COM reference between UI, capture, and video encoding. NV12 textures move through the SPSC queues as `com_ptr`. FFmpeg takes an additional reference while an encoder may retain a frame; its release callback either returns the texture to the capture pool or releases it after pool shutdown. The application flushes the video encoder while `GraphicsCapture` is still alive, so the callback target cannot dangle.
+The D3D device is intentionally shared by COM reference between UI, capture, and video encoding. Converted NV12 textures move through bounded SPSC queues as `com_ptr`. Encoder-input NV12 textures come from a separate 64-surface pool. FFmpeg's per-frame release callback makes an input surface eligible for reuse, while extra COM references keep surfaces registered with a hardware backend alive until codec teardown. A scoped return guard hands surfaces back when frame setup fails before FFmpeg takes ownership; work whose GPU completion cannot be proven is retired and releases its pool slot instead of being reused. The application flushes the video encoder while `GraphicsCapture` is still alive, so the callback target cannot dangle.
 
 ## Threading model
 
 | Owner | Worker | Work | Cancellation |
 |---|---|---|---|
 | `GraphicsCapture` | target | Refreshes game/window and display choices and recreates the selected WGC session | `jthread` stop token plus `running` flag |
-| `GraphicsCapture` | conversion | Pops BGRA textures, runs the D3D11 video processor, signals a fence | `jthread` stop token |
-| `GraphicsCapture` | encoding | Retains the newest fenced NV12 texture and submits GPU copies on the configured frame clock | `jthread` stop token |
+| `GraphicsCapture` | conversion | Pops BGRA textures, runs the D3D11 video processor, signals a D3D11 fence or event query | `jthread` stop token |
+| `GraphicsCapture` | encoding | Retains the newest synchronized NV12 texture and submits GPU copies on the configured frame clock | `jthread` stop token |
 | `AudioPipeline` | desktop | Waits on the WASAPI loopback event and resamples packets | stop token plus signaled event |
 | `AudioPipeline` | microphone | Waits on the selected capture endpoint and resamples packets | stop token plus signaled event |
 | `AudioPipeline` | mixer | Aligns source timestamps, waits for complete AAC windows, then mixes/clamps samples | stop token plus sample-generation condition variable |
@@ -82,7 +90,9 @@ Each initialization failure invokes the same idempotent shutdown path, so partia
 
 ## Timestamp and clip selection
 
-Video timestamps use elapsed QPC time expressed in 100-nanosecond units. WASAPI supplies its QPC position already converted to 100-nanosecond units; the shared origin is converted once before subtraction. Both codec time bases are `1/10,000,000` and packets retain their actual source time base in the buffer.
+Video output uses a fixed rational frame clock; each scheduled frame receives a timestamp derived from its frame index and configured rate. Capture admission uses WGC `SystemRelativeTime` when available, falling back to elapsed QPC callback-arrival time; either timestamp identifies the most recent source update. WASAPI device QPC positions are also expressed in 100-nanosecond units. Video packets retain their encoder time base (`1/FPS`) and audio packets retain their sample-rate time base; the rolling buffer preserves those per-packet time bases.
+
+Changing between valid WGC targets clears replay history so clips do not combine old- and new-target packets, but leaves an active recording running. The encoder retains its fixed output timeline and repeats the last synchronized frame until the new capture session produces one. Selecting no valid target or shutting down still closes the recording normally.
 
 Clip selection finds the requested video threshold, walks back to a decodable keyframe (or forward to the first available keyframe), aligns audio at or after the selected start, and sorts cloned packets by DTS. The muxer computes one common A/V base timestamp, rebases in each source time base, then lets FFmpeg rescale to the stream time base.
 
@@ -90,16 +100,16 @@ Clip selection finds the requested video threshold, walks back to a decodable ke
 
 `Error` carries component, operation, readable message, optional native code/description, and context. Windows, HRESULT, and FFmpeg helpers preserve native details. Workers send errors to the state snapshot and logger; the UI never reads worker-owned mutable fields.
 
-Metrics are lightweight atomics or values sampled outside critical loops: encoded FPS/count, source-frame count, both drop counts and queue depths, encode-call latency, clip-save duration, and rolling-buffer duration/bytes/packet count. Normal frames and packets are not logged.
+Metrics distinguish WGC arrivals, frames accepted for conversion, encoder submissions, and video packets emitted by FFmpeg. Cadence traces also report source-identity repeats, skipped output slots, coalescing, encode failures, and latency. Queue depths/drop counts, clip-save duration, and rolling-buffer duration/bytes/packet count are sampled separately. Normal frames and packets are not logged.
 
 ## Performance-sensitive boundaries
 
 - WGC callbacks only acquire the source texture and attempt one bounded enqueue.
-- WGC frames are rejected before conversion when they arrive faster than the configured target FPS.
+- WGC frames are rate-gated with a half-output-interval threshold to tolerate ordinary early callback jitter. When available, WGC is asked for an update interval at twice the configured output FPS; the source may still deliver fewer unique updates.
 - A retained NV12 snapshot is copied GPU-to-GPU at the configured frame rate, preserving a fixed media timeline when a source is static without copying pixels through the CPU.
 - Conversion and encoding run off the callback thread.
 - The D3D11 multithread interface protects the shared immediate context.
-- NV12 textures are recycled after FFmpeg releases them; resolution changes invalidate only the incompatible pool.
+- Conversion and encoder-input texture pools are separate and bounded. Resolution changes invalidate the incompatible pool; registered hardware encoder inputs remain referenced until codec teardown.
 - Encoded packet payloads are reference-counted by FFmpeg and cloned only at rolling-buffer ingestion and clip snapshot.
 - Recording queue packets are FFmpeg reference clones; the bounded queue prevents an unattended recording from growing memory without limit.
 - Default raw and converted queues hold four frames each, the recording queue holds 512 packets, and the replay packet payload cap is 192 MiB.

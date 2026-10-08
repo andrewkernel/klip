@@ -1,8 +1,10 @@
 cmake_minimum_required(VERSION 3.24)
-project(Klip VERSION 3.0.3 LANGUAGES CXX)
+project(Klip VERSION 2.0.0 LANGUAGES CXX)
 
 option(KLIP_BUILD_TESTS "Build deterministic Klip core tests" ON)
 option(KLIP_BUILD_APP "Build the Windows capture application" ON)
+option(KLIP_ENABLE_TEST_HOOKS "Enable test-only runtime fault injection" OFF)
+option(KLIP_USE_LIBOBS "Use OBS capture, encoding, audio and replay output" ON)
 set(FFMPEG_ROOT "" CACHE PATH "Optional FFmpeg root containing include, lib, and bin")
 
 set(CMAKE_CXX_STANDARD 20)
@@ -39,6 +41,7 @@ if(KLIP_BUILD_TESTS)
   target_link_libraries(klip_tests PRIVATE klip_core)
   klip_project_warnings(klip_tests)
   add_test(NAME klip_core_tests COMMAND klip_tests)
+  set_tests_properties(klip_core_tests PROPERTIES TIMEOUT 30)
 endif()
 
 if(NOT WIN32 OR NOT KLIP_BUILD_APP)
@@ -49,6 +52,11 @@ endif()
 enable_language(RC)
 
 find_package(imgui CONFIG REQUIRED)
+
+if(KLIP_USE_LIBOBS)
+  include(cmake/libobs.cmake)
+  return()
+endif()
 
 find_path(FFMPEG_INCLUDE_DIR libavcodec/avcodec.h
   HINTS "${FFMPEG_ROOT}"
@@ -96,6 +104,9 @@ target_compile_definitions(klip_media PUBLIC
   UNICODE
   _UNICODE
   NOMINMAX)
+if(KLIP_ENABLE_TEST_HOOKS)
+  target_compile_definitions(klip_media PUBLIC KLIP_ENABLE_TEST_HOOKS)
+endif()
 target_link_libraries(klip_media
   PUBLIC klip_core
   PRIVATE
@@ -129,6 +140,17 @@ set(KLIP_ICON_RESOURCE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/assets/klip.ico")
 configure_file(packaging/klip.rc.in "${CMAKE_CURRENT_BINARY_DIR}/klip.rc" @ONLY)
 target_sources(klip_app PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/klip.rc")
 set_target_properties(klip_app PROPERTIES OUTPUT_NAME Klip)
+if(KLIP_BUILD_TESTS)
+  add_executable(klip_windows_tests tests/windows_tests.cpp)
+  target_include_directories(klip_windows_tests PRIVATE "${FFMPEG_INCLUDE_DIR}")
+  target_link_libraries(klip_windows_tests PRIVATE klip_media "${FFMPEG_AVCODEC_LIBRARY}"
+    "${FFMPEG_AVFORMAT_LIBRARY}")
+  add_test(NAME klip_windows_tests COMMAND klip_windows_tests)
+  set_tests_properties(klip_windows_tests PROPERTIES TIMEOUT 30)
+endif()
+if(MINGW)
+  target_link_options(klip_app PRIVATE -municode)
+endif()
 target_include_directories(klip_app PRIVATE "${FFMPEG_INCLUDE_DIR}")
 target_link_libraries(klip_app PRIVATE
   klip_media

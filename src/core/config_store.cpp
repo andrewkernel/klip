@@ -1,4 +1,5 @@
 #include "klip/core/config_store.h"
+#include "klip/core/path_text.h"
 
 #include <algorithm>
 #include <charconv>
@@ -74,11 +75,6 @@ std::filesystem::path ParsePath(const std::string& value) {
   return std::filesystem::path(utf8);
 }
 
-std::string PathText(const std::filesystem::path& path) {
-  const auto text = path.u8string();
-  return {text.begin(), text.end()};
-}
-
 std::vector<std::string> SplitEncoders(const std::string& value) {
   std::vector<std::string> encoders;
   std::istringstream stream(value);
@@ -117,6 +113,13 @@ const char* ScalingName(VideoScalingMode mode) {
 }
 
 bool AssignValue(AppConfig& config, const std::string& key, const std::string& value) {
+  if (key == "obs_replay_enabled") return ParseBool(value, config.obs_replay_enabled);
+  if (key == "obs_cq") return ParseInteger(value, config.obs_cq);
+  if (key == "obs_display_method") return ParseInteger(value, config.obs_display_method);
+  if (key == "obs_limit_game_capture_fps") return ParseBool(value, config.obs_limit_game_capture_fps);
+  if (key == "obs_separate_audio_tracks") return ParseBool(value, config.obs_separate_audio_tracks);
+  if (key == "obs_encoder_id") { config.obs_encoder_id = ParseString(value); return true; }
+  if (key == "obs_filename_format") { config.obs_filename_format = ParseString(value); return true; }
   if (key == "clip_duration_seconds") return ParseDouble(value, config.clip_duration_seconds);
   if (key == "target_fps") {
     std::uint32_t parsed = 0;
@@ -238,11 +241,13 @@ bool LoadConfig(const std::filesystem::path& path, AppConfig& config, std::strin
   std::ifstream input(path);
   if (!input) {
     if (!std::filesystem::exists(path)) return true;
-    diagnostic = "Could not open settings file: " + path.string();
+    diagnostic = "Could not open settings file: " + PathToUtf8(path);
     return false;
   }
 
   AppConfig loaded = config;
+  bool has_obs_encoder_id = false;
+  bool has_legacy_encoder_preferences = false;
   std::string line;
   std::size_t line_number = 0;
   while (std::getline(input, line)) {
@@ -261,6 +266,20 @@ bool LoadConfig(const std::filesystem::path& path, AppConfig& config, std::strin
                    std::to_string(line_number);
       return false;
     }
+    has_obs_encoder_id |= key == "obs_encoder_id";
+    has_legacy_encoder_preferences |= key == "encoder_preferences";
+  }
+
+  // Only migrate an explicitly saved single-encoder choice in an old file.
+  // An explicit new "auto" must win regardless of key order. A legacy fallback
+  // list means automatic selection, not a forced first encoder.
+  if (!has_obs_encoder_id && has_legacy_encoder_preferences && loaded.encoder_preferences.size() == 1) {
+    const auto& legacy = loaded.encoder_preferences.front();
+    if (legacy == "h264_nvenc") loaded.obs_encoder_id = "obs_nvenc_h264_tex";
+    else if (legacy == "h264_amf") loaded.obs_encoder_id = "h264_texture_amf";
+    else if (legacy == "h264_mf") loaded.obs_encoder_id = "obs_qsv11_v2";
+    else if (legacy == "libx264") loaded.obs_encoder_id = "obs_x264";
+    else loaded.obs_encoder_id = legacy;  // Unsupported choices must fail visibly, not silently become auto.
   }
 
   const auto issues = ValidateConfig(loaded);
@@ -294,10 +313,17 @@ bool SaveConfig(const std::filesystem::path& path, const AppConfig& config,
   temporary += ".tmp";
   std::ofstream output(temporary, std::ios::trunc);
   if (!output) {
-    diagnostic = "Could not write settings file: " + temporary.string();
+    diagnostic = "Could not write settings file: " + PathToUtf8(temporary);
     return false;
   }
   output << "# Klip settings - changes made in the app are saved here.\n";
+  output << "obs_replay_enabled=" << (config.obs_replay_enabled ? "true" : "false") << '\n';
+  output << "obs_encoder_id=" << std::quoted(config.obs_encoder_id) << '\n';
+  output << "obs_cq=" << config.obs_cq << '\n';
+  output << "obs_display_method=" << config.obs_display_method << '\n';
+  output << "obs_limit_game_capture_fps=" << (config.obs_limit_game_capture_fps ? "true" : "false") << '\n';
+  output << "obs_filename_format=" << std::quoted(config.obs_filename_format) << '\n';
+  output << "obs_separate_audio_tracks=" << (config.obs_separate_audio_tracks ? "true" : "false") << '\n';
   output << "clip_duration_seconds=" << config.clip_duration_seconds << '\n';
   output << "target_fps=" << config.target_fps << '\n';
   output << "output_width=" << config.output_width << '\n';
@@ -317,7 +343,7 @@ bool SaveConfig(const std::filesystem::path& path, const AppConfig& config,
          << (config.capture_preview_enabled ? "true" : "false") << '\n';
   output << "static_overlay_enabled=" << (config.static_overlay_enabled ? "true" : "false")
          << '\n';
-  output << "static_overlay_path=" << std::quoted(PathText(config.static_overlay_path)) << '\n';
+  output << "static_overlay_path=" << std::quoted(PathToUtf8(config.static_overlay_path)) << '\n';
   output << "live_overlay_enabled=" << (config.live_overlay_enabled ? "true" : "false")
          << '\n';
   output << "live_overlay_window_title=" << std::quoted(config.live_overlay_window_title)
@@ -337,8 +363,8 @@ bool SaveConfig(const std::filesystem::path& path, const AppConfig& config,
   output << "scaling_mode=" << ScalingName(config.scaling_mode) << '\n';
   output << "encoder_quality=" << QualityName(config.encoder_quality) << '\n';
   output << "encoder_preferences=" << JoinEncoders(config.encoder_preferences) << '\n';
-  output << "output_directory=" << std::quoted(PathText(config.output_directory)) << '\n';
-  output << "recording_directory=" << std::quoted(PathText(config.recording_directory)) << '\n';
+  output << "output_directory=" << std::quoted(PathToUtf8(config.output_directory)) << '\n';
+  output << "recording_directory=" << std::quoted(PathToUtf8(config.recording_directory)) << '\n';
   output << "preferred_game_title=" << std::quoted(config.preferred_game_title) << '\n';
   output << "preferred_display_name=" << std::quoted(config.preferred_display_name) << '\n';
   output << "preferred_microphone_name=" << std::quoted(config.preferred_microphone_name)
@@ -346,7 +372,7 @@ bool SaveConfig(const std::filesystem::path& path, const AppConfig& config,
   output << "excluded_audio_process=" << std::quoted(config.excluded_audio_process) << '\n';
   output.flush();
   if (!output) {
-    diagnostic = "Could not finish writing settings file: " + temporary.string();
+    diagnostic = "Could not finish writing settings file: " + PathToUtf8(temporary);
     return false;
   }
   output.close();

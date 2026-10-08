@@ -1,8 +1,8 @@
 #include "klip/media/mp4_muxer.h"
 
-#include <Windows.h>
-
 #include <algorithm>
+
+#include "klip/core/path_text.h"
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -34,7 +34,7 @@ bool Mp4Muxer::Open(const std::filesystem::path& output_path, const CodecSnapsho
   std::error_code ignored;
   std::filesystem::remove(temporary_path_, ignored);
 
-  const auto utf8 = Utf8(temporary_path_);
+  const auto utf8 = PathToUtf8(temporary_path_);
   auto result = avformat_alloc_output_context2(&format_, nullptr, "mp4", utf8.c_str());
   if (result < 0 || format_ == nullptr) {
     error = MakeFfmpegError(component_, "allocate MP4 output", result, utf8);
@@ -117,7 +117,7 @@ bool Mp4Muxer::Write(const EncodedPacket& encoded, std::int64_t base_timestamp_1
 
   const auto result = av_interleaved_write_frame(format_, packet.get());
   if (result < 0) {
-    error = MakeFfmpegError(component_, "write MP4 packet", result, Utf8(temporary_path_));
+    error = MakeFfmpegError(component_, "write MP4 packet", result, PathToUtf8(temporary_path_));
     return false;
   }
   return true;
@@ -131,7 +131,7 @@ bool Mp4Muxer::Finalize(Error& error) {
   const auto result = av_write_trailer(format_);
   header_written_ = false;
   if (result < 0) {
-    error = MakeFfmpegError(component_, "write MP4 trailer", result, Utf8(temporary_path_));
+    error = MakeFfmpegError(component_, "write MP4 trailer", result, PathToUtf8(temporary_path_));
     Abort();
     return false;
   }
@@ -144,7 +144,7 @@ bool Mp4Muxer::Finalize(Error& error) {
   std::filesystem::rename(temporary_path_, output_path_, publication_error);
   if (publication_error) {
     error = Error{component_, "publish completed MP4", publication_error.message(),
-                  publication_error.value(), publication_error.message(), output_path_.string()};
+                  publication_error.value(), publication_error.message(), PathToUtf8(output_path_)};
     Abort();
     return false;
   }
@@ -173,17 +173,6 @@ void Mp4Muxer::Abort() noexcept {
   published_ = false;
 }
 
-std::string Mp4Muxer::Utf8(const std::filesystem::path& path) {
-  const auto value = path.wstring();
-  const auto required =
-      WideCharToMultiByte(CP_UTF8, 0, value.c_str(), -1, nullptr, 0, nullptr, nullptr);
-  if (required <= 0) return {};
-  std::string output(static_cast<std::size_t>(required), '\0');
-  WideCharToMultiByte(CP_UTF8, 0, value.c_str(), -1, output.data(), required, nullptr, nullptr);
-  output.pop_back();
-  return output;
-}
-
 bool Mp4Muxer::CloseFile(Error& error) {
   if (format_ == nullptr) return true;
   int result = 0;
@@ -194,7 +183,7 @@ bool Mp4Muxer::CloseFile(Error& error) {
   video_stream_ = nullptr;
   audio_stream_ = nullptr;
   if (result < 0) {
-    error = MakeFfmpegError(component_, "close MP4 file", result, Utf8(temporary_path_));
+    error = MakeFfmpegError(component_, "close MP4 file", result, PathToUtf8(temporary_path_));
     return false;
   }
   return true;

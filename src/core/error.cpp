@@ -5,9 +5,11 @@
 #include <array>
 #include <sstream>
 
+#if !defined(KLIP_USE_LIBOBS)
 extern "C" {
 #include <libavutil/error.h>
 }
+#endif
 
 namespace klip {
 namespace {
@@ -97,10 +99,15 @@ Error MakeHresultError(ErrorComponent component, std::string operation, long res
 
 Error MakeFfmpegError(ErrorComponent component, std::string operation, int code,
                       std::string context) {
+#if !defined(KLIP_USE_LIBOBS)
   std::array<char, AV_ERROR_MAX_STRING_SIZE> text{};
   av_strerror(code, text.data(), text.size());
   return Error{component, std::move(operation), "FFmpeg operation failed",
                code,      text.data(),          std::move(context)};
+#else
+  return Error{component, std::move(operation), "FFmpeg operation failed", code, {},
+               std::move(context)};
+#endif
 }
 
 }  // namespace klip

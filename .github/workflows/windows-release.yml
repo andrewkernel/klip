@@ -1,240 +1,54 @@
-name: Win64 release
+name: Win64 libobs beta package
 
 on:
   workflow_dispatch:
   pull_request:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
 
 permissions:
-  contents: write
-
-env:
-  VCPKG_COMMIT: 908da3a305a0a8028d9602ab241b433652b3df69
-  FFMPEG_SOURCE_URL: https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n8.1.2.tar.gz
-  FFMPEG_SOURCE_SHA512: c72f4062aecc16d8b2b1e8678d5efe3af4cfaa0cc7c0997052248f9e499e60c2463acf07877cf3b78b246ce3e8078cb043e8d97e90a6b50d06af32ff7369a788
+  contents: read
 
 jobs:
   build:
     runs-on: windows-2022
     timeout-minutes: 90
-
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Resolve version
         shell: pwsh
         run: |
-          if ($env:GITHUB_REF_TYPE -eq "tag") {
-            $version = .\packaging\resolve-version.ps1 `
-              -ReleaseTag $env:GITHUB_REF_NAME
-          } else {
-            $version = .\packaging\resolve-version.ps1
-          }
-          "KLIP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
-
-      - name: Bootstrap pinned vcpkg
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            & packaging/resolve-version.ps1 -ReleaseTag $env:GITHUB_REF_NAME
+          } else { & packaging/resolve-version.ps1 }
+      - name: Prepare pinned toolchain
+        shell: pwsh
+        run: '& tools/bootstrap-validation.ps1'
+      - name: Build and test Debug
+        shell: pwsh
+        run: '& tools/build-obs.ps1 -Configuration Debug -BuildSuffix release-2'
+      - name: Build and test Release
+        shell: pwsh
+        run: '& tools/build-obs.ps1 -Configuration Release -BuildSuffix release-2'
+      - name: Obtain corresponding sources
+        shell: pwsh
+        run: '& packaging/prepare-obs-sources.ps1'
+      - name: Package unsigned beta
         shell: pwsh
         run: |
-          git clone --filter=blob:none --no-checkout https://github.com/microsoft/vcpkg.git dependencies\vcpkg
-          git -C dependencies\vcpkg fetch --depth 1 origin $env:VCPKG_COMMIT
-          git -C dependencies\vcpkg checkout --detach $env:VCPKG_COMMIT
-          & dependencies\vcpkg\bootstrap-vcpkg.bat -disableMetrics
-
-      - uses: actions/cache@v4
+          $compiler='C:/Program Files (x86)/Inno Setup 6/ISCC.exe'
+          & packaging/package-obs-win64.ps1 -BuildDirectory build-obs-Release-release-2 -SourcesDirectory work/release-sources-2.0.0 -InnoSetupCompiler $compiler
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          path: vcpkg-cache
-          key: windows-vcpkg-${{ hashFiles('vcpkg.json', 'packaging/ffmpeg-vcpkg/vcpkg.json', 'packaging/triplets/*.cmake') }}
-
-      - name: Build redistributable FFmpeg SDK
-        shell: pwsh
-        env:
-          VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
-        run: |
-          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
-          & dependencies\vcpkg\vcpkg.exe install `
-            --x-manifest-root=packaging\ffmpeg-vcpkg `
-            --x-install-root=dependencies\ffmpeg-installed `
-            --overlay-triplets=packaging\triplets `
-            --triplet=x64-windows-klip
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "FFMPEG_ROOT=$pwd\dependencies\ffmpeg-installed\x64-windows-klip" |
-            Out-File -FilePath $env:GITHUB_ENV -Append
-
-      - name: Configure Win64
-        shell: pwsh
-        env:
-          VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
-        run: |
-          cmake -S . -B build -A x64 `
-            -DCMAKE_TOOLCHAIN_FILE="$pwd\dependencies\vcpkg\scripts\buildsystems\vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
-            -DFFMPEG_ROOT="$env:FFMPEG_ROOT" `
-            -DKLIP_BUILD_TESTS=ON
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Build and test
-        shell: pwsh
-        run: |
-          cmake --build build --config Release --parallel
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          ctest --test-dir build -C Release --output-on-failure
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Sign Klip executable when credentials are configured
-        shell: pwsh
-        env:
-          WINDOWS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
-          WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERTIFICATE_BASE64)) {
-            Write-Warning "No signing certificate configured; this build will be published unsigned."
-            exit 0
-          }
-          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD)) {
-            throw "WINDOWS_SIGNING_CERTIFICATE_PASSWORD is required when a signing certificate is configured."
-          }
-          $certificate = Join-Path $env:RUNNER_TEMP "klip-signing.pfx"
-          [IO.File]::WriteAllBytes($certificate,
-            [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERTIFICATE_BASE64))
-          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" `
-            -Filter signtool.exe -File -Recurse |
-            Where-Object FullName -Match '\\x64\\signtool\.exe$' |
-            Sort-Object FullName -Descending | Select-Object -First 1
-          if (-not $signtool) { throw "The x64 Windows SDK signtool.exe was not found." }
-          & $signtool.FullName sign /fd SHA256 /td SHA256 `
-            /tr http://timestamp.digicert.com /f $certificate `
-            /p $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD build\Release\Klip.exe
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "KLIP_SIGNTOOL=$($signtool.FullName)" | Out-File $env:GITHUB_ENV -Append
-          "KLIP_CERTIFICATE=$certificate" | Out-File $env:GITHUB_ENV -Append
-
-      - name: Install Inno Setup
-        shell: pwsh
-        run: |
-          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
-            choco install innosetup --no-progress -y
-          }
-
-      - name: Assemble installer and portable ZIP
-        shell: pwsh
-        run: |
-          .\packaging\package-win64.ps1 `
-            -BuildDirectory build\Release `
-            -FfmpegRoot $env:FFMPEG_ROOT `
-            -Version $env:KLIP_VERSION `
-            -OutputDirectory artifacts `
-            -VcpkgInstalledDirectory "$pwd\build\vcpkg_installed"
-
-      - name: Sign and verify installer
-        if: env.KLIP_CERTIFICATE != ''
-        shell: pwsh
-        env:
-          WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
-        run: |
-          $installer = Get-Item "artifacts\Klip-*-win64-setup.exe"
-          & $env:KLIP_SIGNTOOL sign /fd SHA256 /td SHA256 `
-            /tr http://timestamp.digicert.com /f $env:KLIP_CERTIFICATE `
-            /p $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD $installer.FullName
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $env:KLIP_SIGNTOOL verify /pa /v build\Release\Klip.exe
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $env:KLIP_SIGNTOOL verify /pa /v $installer.FullName
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Generate release checksums
-        shell: pwsh
-        run: |
-          $releaseFiles = @(Get-Item artifacts\Klip-*-win64-portable.zip, artifacts\Klip-*-win64-setup.exe)
-          $sums = foreach ($file in $releaseFiles) {
-            $hash = Get-FileHash $file.FullName -Algorithm SHA256
-            "{0}  {1}" -f $hash.Hash.ToLowerInvariant(), $file.Name
-          }
-          Set-Content artifacts\SHA256SUMS.txt $sums -Encoding ascii
-
-      - name: Smoke-test installed layout
-        shell: pwsh
-        run: |
-          $installer = (Get-Item "artifacts\Klip-*-win64-setup.exe").FullName
-          $installRoot = Join-Path $env:RUNNER_TEMP "Klip-install-smoke"
-          $arguments = @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$installRoot")
-          $process = Start-Process $installer -ArgumentList $arguments -PassThru -Wait
-          if ($process.ExitCode -ne 0) { throw "Installer exited with $($process.ExitCode)" }
-          foreach ($required in @("Klip.exe", "EULA.txt", "PRIVACY.md", "THIRD_PARTY_NOTICES.md")) {
-            if (-not (Test-Path (Join-Path $installRoot $required) -PathType Leaf)) {
-              throw "Installed package is missing $required"
-            }
-          }
-          foreach ($pattern in @("avcodec-*.dll", "avformat-*.dll", "avutil-*.dll", "swresample-*.dll")) {
-            if (-not (Get-ChildItem $installRoot -Filter $pattern -File)) {
-              throw "Installed package is missing $pattern"
-            }
-          }
-
-          function Invoke-KlipPackageSmoke([string]$executable, [string]$dataRoot) {
-            $env:KLIP_DATA_ROOT = $dataRoot
-            $process = Start-Process $executable -ArgumentList "--package-smoke-test" `
-              -WindowStyle Hidden -PassThru -Wait
-            if ($process.ExitCode -ne 0) {
-              throw "$executable package smoke test exited with $($process.ExitCode)"
-            }
-            if (-not (Test-Path (Join-Path $dataRoot "settings.ini") -PathType Leaf)) {
-              throw "$executable did not create first-run settings"
-            }
-          }
-
-          Invoke-KlipPackageSmoke (Join-Path $installRoot "Klip.exe") `
-            (Join-Path $env:RUNNER_TEMP "Klip-installed-data-smoke")
-
-          $portableRoot = Join-Path $env:RUNNER_TEMP "Klip-portable-smoke"
-          Expand-Archive (Get-Item "artifacts\Klip-*-win64-portable.zip").FullName `
-            -DestinationPath $portableRoot
-          Invoke-KlipPackageSmoke (Join-Path $portableRoot "Klip.exe") `
-            (Join-Path $env:RUNNER_TEMP "Klip-portable-data-smoke")
-          Remove-Item Env:KLIP_DATA_ROOT -ErrorAction SilentlyContinue
-
-          $uninstaller = Join-Path $installRoot "unins000.exe"
-          $process = Start-Process $uninstaller `
-            -ArgumentList @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART") `
-            -PassThru -Wait
-          if ($process.ExitCode -ne 0) { throw "Uninstaller exited with $($process.ExitCode)" }
-
-      - name: Bundle exact FFmpeg source and vcpkg build patches
-        shell: pwsh
-        run: |
-          $bundle = "dependencies\ffmpeg-source-bundle"
-          New-Item -ItemType Directory -Force $bundle | Out-Null
-          Invoke-WebRequest -UseBasicParsing -Uri $env:FFMPEG_SOURCE_URL `
-            -OutFile "$bundle\ffmpeg-n8.1.2.tar.gz"
-          $actual = (Get-FileHash "$bundle\ffmpeg-n8.1.2.tar.gz" -Algorithm SHA512).Hash.ToLowerInvariant()
-          if ($actual -ne $env:FFMPEG_SOURCE_SHA512) { throw "FFmpeg source checksum mismatch: $actual" }
-          Copy-Item dependencies\vcpkg\ports\ffmpeg "$bundle\vcpkg-port" -Recurse
-          Copy-Item packaging\triplets "$bundle\triplets" -Recurse
-          @"
-          Klip's FFmpeg DLLs were built from ffmpeg-n8.1.2.tar.gz using the included
-          pinned vcpkg port at commit $env:VCPKG_COMMIT and included x64-windows-klip
-          triplet. The port directory contains the applied patch set and build recipe.
-          "@ | Set-Content "$bundle\BUILDING.txt" -Encoding UTF8
-          Compress-Archive "$bundle\*" "artifacts\ffmpeg-source-n8.1.2-vcpkg.zip" `
-            -CompressionLevel Optimal
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Klip-win64-${{ github.run_number }}
+          name: Klip-win64-beta-${{ github.run_number }}
           path: |
-            artifacts/Klip-*-win64-setup.exe
-            artifacts/Klip-*-win64-portable.zip
-            artifacts/SHA256SUMS.txt
-            artifacts/ffmpeg-source-*.zip
+            artifacts/**/Klip-*-win64-setup.exe
+            artifacts/**/Klip-*-win64-portable.zip
+            artifacts/**/Klip-*-corresponding-sources.zip
+            artifacts/**/SHA256SUMS.txt
           if-no-files-found: error
 
-      - name: Publish tagged GitHub release
-        if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: |
-            artifacts/Klip-*-win64-setup.exe
-            artifacts/Klip-*-win64-portable.zip
-            artifacts/SHA256SUMS.txt
-            artifacts/ffmpeg-source-*.zip
+# Artifact builds do not automatically publish a stable release or replace
+# user-tested binaries. Publishing requires review of exact package evidence,
+# hardware limitations, source/license inventory and hashes. Stable releases
+# additionally require signing and clean-machine/hardware acceptance.

@@ -1,5 +1,10 @@
 # Win64 release process
 
+Klip 2.0 uses the new [libobs release process](release-2.0.md). The instructions
+below document the historical legacy-engine 3.0.x workflow, not the 2.0 build.
+The 2.0 beta is unsigned and explicitly marked prerelease; no stable release
+is automatically published by a tag. Stable signing/hardware gates still apply.
+
 ## Automated release
 
 1. Update the version in `CMakeLists.txt` and `vcpkg.json`. The shared resolver rejects a

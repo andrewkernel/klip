@@ -17,6 +17,7 @@ enum class CaptureStatus { kIdle, kStarting, kBuffering, kSaving, kStopping, kFa
 
 struct MetricsSnapshot {
   double capture_fps = 0.0;
+  double source_fps = 0.0;
   std::uint64_t captured_frames = 0;
   std::uint64_t dropped_raw_frames = 0;
   std::uint64_t dropped_encode_frames = 0;
@@ -48,7 +49,15 @@ struct ApplicationSnapshot {
   std::uint64_t selected_capture_source_id = 0;
   std::vector<CaptureSourceOption> game_sources;
   std::vector<CaptureSourceOption> display_sources;
+  std::vector<CaptureSourceOption> overlay_sources;
+  std::string graphics_adapter;
+  std::string graphics_feature_level;
+  std::string capture_adapter;
+  std::string capture_adapter_relationship;
+  std::uint32_t graphics_adapter_vendor_id = 0;
   std::string selected_encoder;
+  std::vector<std::string> available_encoders;
+  std::string encoder_status;
   bool desktop_audio_active = false;
   bool microphone_enabled = false;
   bool microphone_active = false;
@@ -65,6 +74,7 @@ struct ApplicationSnapshot {
   std::filesystem::path last_saved_recording;
   std::string current_operation;
   std::optional<Error> last_error;
+  std::uint64_t error_generation = 0;
   bool settings_restart_required = false;
   std::string settings_message;
   MetricsSnapshot metrics;
@@ -76,19 +86,25 @@ class ApplicationState {
   void Update(const ApplicationSnapshot& snapshot);
   void SetStatus(CaptureStatus status, std::string operation = {});
   void SetError(Error error);
-  void ClearError();
+  void ClearError(ErrorComponent component);
   void SetTarget(CaptureTargetMode mode, std::string description, std::uint64_t source_id = 0);
   void SetCaptureSources(std::vector<CaptureSourceOption> game_sources,
                          std::vector<CaptureSourceOption> display_sources,
                          std::uint64_t selected_source_id);
+  void SetOverlaySources(std::vector<CaptureSourceOption> sources);
+  void SetGraphicsAdapter(std::string adapter, std::uint32_t vendor_id = 0,
+                          std::string feature_level = {});
+  void SetCaptureAdapter(std::string adapter, std::string relationship);
   void SetEncoder(std::string encoder);
+  void SetAvailableEncoders(std::vector<std::string> encoders);
+  void SetEncoderStatus(std::string status);
   void SetAudio(bool desktop_active, bool microphone_active, float desktop_level,
                 float microphone_level);
   void SetMicrophoneEnabled(bool enabled);
   void SetMicrophones(std::vector<std::string> microphones, int selected_index);
   void SetAudioApplications(std::vector<AudioApplicationOption> applications);
   void SetMetrics(const MetricsSnapshot& metrics);
-  void SetCaptureMetrics(double fps, std::uint64_t captured_frames,
+  void SetCaptureMetrics(double fps, double source_fps, std::uint64_t captured_frames,
                          std::uint64_t dropped_raw_frames, std::uint64_t dropped_encode_frames,
                          std::size_t raw_queue_depth, std::size_t video_queue_depth,
                          double encode_latency_ms);

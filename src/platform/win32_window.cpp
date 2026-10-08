@@ -3,7 +3,9 @@
 #include <dwmapi.h>
 #include <imgui.h>
 #include <imgui_impl_win32.h>
+#include <shellapi.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <utility>
@@ -28,8 +30,7 @@ bool PointInPolygon(float x, float y, const std::array<LogoPoint, 4>& polygon) {
        previous = current++) {
     const auto& a = polygon[current];
     const auto& b = polygon[previous];
-    if (((a.y > y) != (b.y > y)) &&
-        x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x) {
+    if (((a.y > y) != (b.y > y)) && x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x) {
       inside = !inside;
     }
   }
@@ -60,15 +61,14 @@ HICON CreateKlipIcon(int size) {
   bitmap_info.bmiHeader.biCompression = BI_RGB;
 
   std::uint32_t* pixels = nullptr;
-  HBITMAP color_bitmap =
-      CreateDIBSection(nullptr, &bitmap_info, DIB_RGB_COLORS,
-                       reinterpret_cast<void**>(&pixels), nullptr, 0);
+  HBITMAP color_bitmap = CreateDIBSection(nullptr, &bitmap_info, DIB_RGB_COLORS,
+                                          reinterpret_cast<void**>(&pixels), nullptr, 0);
   if (color_bitmap == nullptr || pixels == nullptr) return nullptr;
 
-  constexpr std::array<LogoPoint, 4> upper{{{8.0F, 15.0F}, {24.0F, 0.0F},
-                                            {35.0F, 0.0F}, {17.0F, 18.0F}}};
-  constexpr std::array<LogoPoint, 4> lower{{{9.0F, 18.0F}, {18.0F, 10.0F},
-                                            {36.0F, 34.0F}, {23.0F, 34.0F}}};
+  constexpr std::array<LogoPoint, 4> upper{
+      {{8.0F, 15.0F}, {24.0F, 0.0F}, {35.0F, 0.0F}, {17.0F, 18.0F}}};
+  constexpr std::array<LogoPoint, 4> lower{
+      {{9.0F, 18.0F}, {18.0F, 10.0F}, {36.0F, 34.0F}, {23.0F, 34.0F}}};
   constexpr std::array<std::uint8_t, 3> left_color{139, 67, 247};
   constexpr std::array<std::uint8_t, 3> upper_color{177, 90, 255};
   constexpr std::array<std::uint8_t, 3> lower_color{103, 48, 219};
@@ -105,9 +105,8 @@ HICON CreateKlipIcon(int size) {
       const auto channel = [](int value) {
         return static_cast<std::uint32_t>(value / sample_count);
       };
-      pixels[pixel_y * size + pixel_x] =
-          (channel(alpha * 255) << 24U) | (channel(red) << 16U) | (channel(green) << 8U) |
-          channel(blue);
+      pixels[pixel_y * size + pixel_x] = (channel(alpha * 255) << 24U) | (channel(red) << 16U) |
+                                         (channel(green) << 8U) | channel(blue);
     }
   }
 
@@ -163,12 +162,17 @@ bool Win32Window::Create(HINSTANCE instance, int show_command, Error& error) {
     error = MakeWin32Error(ErrorComponent::kWindow, "register window class", GetLastError());
     return false;
   }
-  constexpr DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
-  RECT rectangle{0, 0, 1280, 820};
-  AdjustWindowRect(&rectangle, style, FALSE);
+  constexpr DWORD style =
+      WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SIZEBOX;
   MONITORINFO monitor{};
   monitor.cbSize = sizeof(monitor);
   GetMonitorInfoW(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), &monitor);
+  const int work_width = monitor.rcWork.right - monitor.rcWork.left;
+  const int work_height = monitor.rcWork.bottom - monitor.rcWork.top;
+  const int client_width = std::min(1260, std::max(960, work_width - 32));
+  const int client_height = std::min(800, std::max(620, work_height - 48));
+  RECT rectangle{0, 0, client_width, client_height};
+  AdjustWindowRect(&rectangle, style, FALSE);
   const int width = rectangle.right - rectangle.left;
   const int height = rectangle.bottom - rectangle.top;
   const int x = monitor.rcWork.left + (monitor.rcWork.right - monitor.rcWork.left - width) / 2;
@@ -183,12 +187,32 @@ bool Win32Window::Create(HINSTANCE instance, int show_command, Error& error) {
   ApplyDarkWindowChrome(window_);
   SendMessageW(window_, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(large_icon_));
   SendMessageW(window_, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(small_icon_));
+  visible_ = show_command != SW_HIDE;
   ShowWindow(window_, show_command);
   UpdateWindow(window_);
+#if defined(KLIP_USE_LIBOBS)
+  taskbar_created_message_ = RegisterWindowMessageW(L"TaskbarCreated");
+  UpdateTray(true);
+#endif
   return true;
 }
 
+void Win32Window::UpdateTray(bool add) noexcept {
+#if defined(KLIP_USE_LIBOBS)
+  NOTIFYICONDATAW icon{};
+  icon.cbSize = sizeof(icon); icon.hWnd = window_; icon.uID = 1;
+  icon.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+  icon.uCallbackMessage = WM_APP + 54; icon.hIcon = small_icon_;
+  wcscpy_s(icon.szTip, L"Klip / open or quit from the tray");
+  if (add) tray_added_ = Shell_NotifyIconW(NIM_ADD, &icon) != FALSE;
+  else { Shell_NotifyIconW(NIM_DELETE, &icon); tray_added_ = false; }
+#else
+  (void)add;
+#endif
+}
+
 void Win32Window::Destroy() noexcept {
+  if (tray_added_) UpdateTray(false);
   if (window_ != nullptr) {
     if (IsWindow(window_)) {
       SetWindowLongPtrW(window_, GWLP_USERDATA, 0);
@@ -246,6 +270,7 @@ LRESULT CALLBACK Win32Window::WindowProc(HWND window, UINT message, WPARAM w_par
     self->window_ = window;
     SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
   }
+  if (self && message != WM_NCHITTEST) self->redraw_requested_ = true;
   if (ImGui::GetCurrentContext() != nullptr &&
       ImGui_ImplWin32_WndProcHandler(window, message, w_param, l_param))
     return 1;
@@ -254,8 +279,48 @@ LRESULT CALLBACK Win32Window::WindowProc(HWND window, UINT message, WPARAM w_par
 }
 
 LRESULT Win32Window::HandleMessage(UINT message, WPARAM w_param, LPARAM l_param) {
+#if defined(KLIP_USE_LIBOBS)
+  if (taskbar_created_message_ && message == taskbar_created_message_) { UpdateTray(true); return 0; }
+#endif
   switch (message) {
+#if defined(KLIP_USE_LIBOBS)
+    case WM_CLOSE:
+      if (tray_added_) { if (visible_) ToggleVisibility(); return 0; }
+      break;
+    case WM_APP + 56:
+      if (!visible_) ToggleVisibility();
+      SetForegroundWindow(window_);
+      return 0;
+    case WM_APP + 54:
+      if (l_param == WM_LBUTTONUP || l_param == WM_LBUTTONDBLCLK) {
+        if (!visible_) ToggleVisibility();
+        SetForegroundWindow(window_);
+      } else if (l_param == WM_RBUTTONUP) {
+        POINT position{}; GetCursorPos(&position);
+        HMENU menu = CreatePopupMenu();
+        AppendMenuW(menu, MF_STRING, 1, L"Open Klip");
+        AppendMenuW(menu, MF_STRING, 2, L"Quit Klip");
+        SetForegroundWindow(window_);
+        const auto command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY, position.x, position.y, 0, window_, nullptr);
+        DestroyMenu(menu);
+        if (command == 1) { if (!visible_) ToggleVisibility(); SetForegroundWindow(window_); }
+        else if (command == 2) { UpdateTray(false); DestroyWindow(window_); }
+      }
+      return 0;
+#endif
+    case WM_GETMINMAXINFO: {
+      auto* limits = reinterpret_cast<MINMAXINFO*>(l_param);
+      RECT minimum{0, 0, 960, 620};
+      AdjustWindowRect(
+          &minimum,
+          WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SIZEBOX,
+          FALSE);
+      limits->ptMinTrackSize.x = minimum.right - minimum.left;
+      limits->ptMinTrackSize.y = minimum.bottom - minimum.top;
+      return 0;
+    }
     case WM_SIZE:
+      minimized_ = w_param == SIZE_MINIMIZED;
       if (w_param != SIZE_MINIMIZED) {
         pending_width_ = LOWORD(l_param);
         pending_height_ = HIWORD(l_param);

@@ -23,6 +23,15 @@ bool SameHotkey(unsigned int modifiers_a, unsigned int key_a, unsigned int modif
 
 std::vector<ValidationIssue> ValidateConfig(const AppConfig& config) {
   std::vector<ValidationIssue> issues;
+  if (config.obs_cq < 1 || config.obs_cq > 51)
+    issues.push_back({"obs_cq", "must be between 1 and 51"});
+  if (config.obs_display_method < 0 || config.obs_display_method > 2)
+    issues.push_back({"obs_display_method", "must be an OBS display capture method (0-2)"});
+  if (config.obs_encoder_id.empty()) issues.push_back({"obs_encoder_id", "must not be empty"});
+  if (config.obs_filename_format.empty() || config.obs_filename_format.size() > 200 ||
+      config.obs_filename_format.find_first_of("/\\:\r\n") != std::string::npos ||
+      config.obs_filename_format.find("..") != std::string::npos)
+    issues.push_back({"obs_filename_format", "must be a filename pattern without path separators"});
   const auto reject = [&issues](std::string field, std::string message) {
     issues.push_back({std::move(field), std::move(message)});
   };
@@ -216,7 +225,14 @@ std::string FormatHotkey(unsigned int modifiers, unsigned int virtual_key) {
 }
 
 bool RequiresMediaPipelineReconfigure(const AppConfig& current, const AppConfig& updated) {
-  return current.target_fps != updated.target_fps ||
+  return current.obs_replay_enabled != updated.obs_replay_enabled ||
+         current.obs_encoder_id != updated.obs_encoder_id ||
+         current.obs_cq != updated.obs_cq ||
+         current.obs_display_method != updated.obs_display_method ||
+         current.obs_limit_game_capture_fps != updated.obs_limit_game_capture_fps ||
+         current.obs_filename_format != updated.obs_filename_format ||
+         current.obs_separate_audio_tracks != updated.obs_separate_audio_tracks ||
+         current.target_fps != updated.target_fps ||
          current.output_width != updated.output_width ||
          current.output_height != updated.output_height ||
          current.scaling_mode != updated.scaling_mode ||

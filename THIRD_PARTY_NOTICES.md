@@ -1,38 +1,53 @@
-# Third-party notices
+# Third-party notices — Klip 2.0
 
-Klip's Win64 distribution includes the following third-party components.
+Klip 2.0 is distributed under GPL-3.0-or-later; see LICENSE. Individual
+third-party components retain their own copyrights and licenses. Microsoft
+Windows, GPU drivers and the Microsoft Visual C++ runtime are system
+prerequisites, not relicensed as GPL components.
 
-## FFmpeg
+## OBS Studio / libobs 32.1.2
 
-Klip dynamically links to FFmpeg libraries built by the release workflow from a pinned
-FFmpeg release and pinned Microsoft vcpkg port. FFmpeg is licensed under the GNU Lesser
-General Public License, version 2.1 or later. The distribution includes the upstream
-license and build/version configuration. The original source, vcpkg build recipe, and
-complete applied patch set are published beside each Klip installer and portable ZIP.
+The runtime uses the unmodified official OBS Windows x64 libraries and required
+capture, WASAPI, encoding, output and overlay modules. OBS is GPL-2.0-or-later.
+Source commit: fb4d98bf88fae5fc85cb11fc57f7c5e309282194.
+Official runtime SHA-256: 8d97e4563bd8d22d03e63042aa7dccede1d555c9bd35ce8a9e5019b0d0201bf6.
+Upstream: https://github.com/obsproject/obs-studio/tree/32.1.2
+OBS license text is in licenses/OBS-GPL-2.0.txt.
 
-- Project: https://ffmpeg.org/
-- Source: https://github.com/FFmpeg/FFmpeg
-- Build recipe: https://github.com/microsoft/vcpkg/tree/master/ports/ffmpeg
+## OBS runtime dependencies
 
-The FFmpeg DLLs remain replaceable: they are ordinary files beside `Klip.exe`.
+These are the official OBS dependency builds, not Klip's former LGPL-only
+FFmpeg 8 SDK. The official FFmpeg 7.1.1 runtime enables GPL and version3
+(including x264 and other codecs); the distributed combination uses GPLv3
+compatible terms. The release includes source archives, license texts and the
+complete upstream build/patch recipes from obs-deps 2025-08-23 (commit
+21e25b2b508598ce8239de9ecd68400e45559399). Archive hashes and revisions are
+in dependency-sources.json in the corresponding-sources download.
+See https://github.com/obsproject/obs-deps/tree/2025-08-23.
+OBS's bundled pthreads, JSON, graphics and audio utility sources are included
+in the OBS source archive. Open-source dependency sources and notices include
+FFmpeg, x264, Opus, Ogg/Vorbis/Theora, libvpx, SVT-AV1, AOM, LAME, mbedTLS,
+SRT, librist, zlib, curl, Jansson, rnnoise, SpeexDSP, FreeType, Detours,
+Intel libvpl, WIL, zstd, NV codec headers and AMF headers.
 
-## Dear ImGui
+## Dear ImGui 1.92.8
 
-Klip statically links Dear ImGui and its official Win32 and DirectX 11 backends. Dear
-ImGui is licensed under the MIT License. The packaged distribution includes the license
-text installed by vcpkg.
+Klip statically links ImGui with its Win32/D3D11 backends under the MIT license.
+Source archive and license are provided. https://github.com/ocornut/imgui
 
-- Project and source: https://github.com/ocornut/imgui
+## LLVM runtime
+
+libc++ and libunwind from llvm-mingw 20260922 are unmodified shared libraries.
+The LLVM Apache-2.0 license with LLVM exceptions is in licenses/LLVM-runtime.txt.
+Source/build provenance: https://github.com/mstorsjo/llvm-mingw/tree/20260922
 
 ## Inter
 
-Klip bundles the Inter typeface for its desktop interface. Inter is Copyright 2016 The Inter
-Project Authors and is distributed under the SIL Open Font License, Version 1.1. The packaged
-distribution includes the complete license text.
+Copyright 2016 The Inter Project Authors. SIL Open Font License 1.1; complete
+license is in bin/64bit/fonts/LICENSE-Inter.txt. https://rsms.me/inter/
 
-- Project: https://rsms.me/inter/
-- Source: https://github.com/rsms/inter
+Complete Klip source and build scripts are published at the release tag,
+and upstream source/build archives accompany the installer/portable download:
+https://github.com/andrewkernel/klip/releases/tag/v2.0.0
 
-This notice is informational and is not legal advice. Klip itself is distributed under
-the End User License Agreement in `EULA.txt`; that agreement does not replace or restrict
-the licenses that apply to the third-party components listed above.
+This inventory is not a legal opinion or a hardware-compatibility guarantee.

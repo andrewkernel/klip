@@ -7,6 +7,7 @@
 #include <exception>
 
 #include "klip/media/mp4_muxer.h"
+#include "klip/core/path_text.h"
 
 extern "C" {
 #include <libavutil/mathematics.h>
@@ -38,7 +39,7 @@ bool ClipWriter::Start(AppConfig config, SnapshotProvider video, SnapshotProvide
     running_.store(false, std::memory_order_release);
     error = Error{ErrorComponent::kClipWriter, "create output directory",
                   directory_error.message(),   directory_error.value(),
-                  directory_error.message(),   config_.output_directory.string()};
+                  directory_error.message(),   PathToUtf8(config_.output_directory)};
     return false;
   }
   worker_ = std::jthread([this](std::stop_token token) { Worker(token); });
@@ -88,15 +89,18 @@ void ClipWriter::Worker(std::stop_token stop_token) noexcept {
         // A clip requested immediately after capture starts can arrive before the
         // encoder has emitted its first keyframe. Give the rolling buffer a short
         // warm-up window instead of failing the user-visible clip operation.
-        auto packets = buffer_.Snapshot(request.duration_seconds);
+        std::vector<EncodedPacket> packets;
+        auto snapshot_ok = buffer_.Snapshot(request.duration_seconds, packets, error);
         constexpr auto kKeyframeWarmup = std::chrono::seconds(5);
         const auto warmup_deadline = std::chrono::steady_clock::now() + kKeyframeWarmup;
-        while (packets.empty() && !stop_token.stop_requested() &&
+        while (snapshot_ok && packets.empty() && !stop_token.stop_requested() &&
                std::chrono::steady_clock::now() < warmup_deadline) {
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
-          packets = buffer_.Snapshot(request.duration_seconds);
+          snapshot_ok = buffer_.Snapshot(request.duration_seconds, packets, error);
         }
-        if (packets.empty()) {
+        if (!snapshot_ok) {
+          // The buffer already supplied the precise failure and guarantees no partial snapshot.
+        } else if (packets.empty()) {
           error = Error{ErrorComponent::kClipWriter, "select clip range",
                         "the rolling buffer does not yet contain a keyframe"};
         } else if (Write(request, packets, video, has_audio ? &audio : nullptr, error)) {
@@ -104,8 +108,8 @@ void ClipWriter::Worker(std::stop_token stop_token) noexcept {
               std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
                   .count();
           state_.SetLastSavedClip(request.output_path, duration);
-          state_.ClearError();
-          logger_.Info("Clip saved: " + request.output_path.string());
+          state_.ClearError(ErrorComponent::kClipWriter);
+          logger_.Info("Clip saved: " + PathToUtf8(request.output_path));
           restore_status();
           continue;
         }

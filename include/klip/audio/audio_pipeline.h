@@ -28,6 +28,11 @@ extern "C" {
 
 namespace klip {
 
+// Resolve the storage container, not merely the device's valid precision bits.
+AVSampleFormat ResolveWaveSampleFormat(const WAVEFORMATEX* format);
+bool ConvertPackedPcm24ToS32(const WAVEFORMATEX* format, const std::uint8_t* input,
+                             std::uint32_t frames, std::vector<std::int32_t>& output);
+
 class AudioPipeline {
  public:
   AudioPipeline(AudioEncoder& encoder, ApplicationState& state, Logger& logger);
@@ -41,7 +46,7 @@ class AudioPipeline {
   void Shutdown() noexcept;
   void StopCapture() noexcept;
   void SetMicrophoneEnabled(bool enabled);
-  void SetDesktopEnabled(bool enabled) noexcept;
+  void SetDesktopEnabled(bool enabled);
   void SetExcludedApplication(std::string executable_name);
   void SetDesktopGain(float gain) noexcept;
   void SetMicrophoneGain(float gain) noexcept;
@@ -69,6 +74,7 @@ class AudioPipeline {
     WAVEFORMATEX* format = nullptr;
     SwrContext* resampler = nullptr;
     ScopedHandle ready_event;
+    std::atomic<bool> failed{false};
     std::vector<float> converted;
     std::jthread thread;
   };
@@ -90,7 +96,6 @@ class AudioPipeline {
   float Level(const SourceBuffer& buffer) const;
   bool Active(const SourceBuffer& buffer) const;
   std::int64_t Now100ns() const noexcept;
-  static AVSampleFormat SampleFormat(const WAVEFORMATEX* format);
   static std::string WideToUtf8(const std::wstring& value);
   static std::int64_t FramesTo100ns(int frames);
   static int PtsToFrames(std::int64_t pts);
@@ -104,6 +109,8 @@ class AudioPipeline {
   std::atomic<bool> running_{false};
   std::atomic<bool> microphone_running_{false};
   std::atomic<bool> desktop_enabled_{true};
+  std::chrono::steady_clock::time_point desktop_retry_after_{};
+  std::chrono::steady_clock::time_point microphone_retry_after_{};
   std::atomic<float> desktop_gain_{1.0F};
   std::atomic<float> microphone_gain_{1.0F};
   std::atomic<std::uint64_t> sample_generation_{0};

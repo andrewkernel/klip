@@ -26,6 +26,7 @@ class Hotkeys {
 
  private:
   HWND window_ = nullptr;
+  HotkeyConfig config_;
   bool save_registered_ = false;
   bool toggle_registered_ = false;
   bool record_registered_ = false;

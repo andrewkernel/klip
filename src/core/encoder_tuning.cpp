@@ -11,14 +11,14 @@ void Add(EncoderTuning& tuning, std::string key, std::string value) {
 
 }  // namespace
 
-EncoderTuning BuildEncoderTuning(const std::string& encoder_name,
-                                 std::uint32_t frames_per_second,
+EncoderTuning BuildEncoderTuning(const std::string& encoder_name, std::uint32_t frames_per_second,
                                  EncoderQuality quality) {
   EncoderTuning tuning;
   const auto fps = std::max<std::uint32_t>(1, frames_per_second);
   tuning.gop_frames = static_cast<int>(fps * 2);
-  tuning.max_b_frames = quality == EncoderQuality::kPerformance ? 0 : 2;
-  tuning.low_delay = quality == EncoderQuality::kPerformance;
+  const bool software_fallback = encoder_name == "h264_mf_software";
+  tuning.max_b_frames = quality == EncoderQuality::kPerformance || software_fallback ? 0 : 2;
+  tuning.low_delay = quality == EncoderQuality::kPerformance || software_fallback;
 
   Add(tuning, "g", std::to_string(tuning.gop_frames));
   Add(tuning, "bf", std::to_string(tuning.max_b_frames));
@@ -57,7 +57,10 @@ EncoderTuning BuildEncoderTuning(const std::string& encoder_name,
     Add(tuning, "profile", "high");
     Add(tuning, "forced_idr", "1");
     if (quality == EncoderQuality::kPerformance) {
-      Add(tuning, "usage", "ultralowlatency");
+      // FFmpeg's AMF ultralowlatency usage on the tested AMD driver emitted only the initial
+      // IDR despite an explicit GOP size. Use the normal transcoding profile with AMF's low-latency
+      // mode enabled so periodic keyframes remain available to the rolling buffer and recorder.
+      Add(tuning, "usage", "transcoding");
       Add(tuning, "quality", "speed");
       Add(tuning, "rc", "cbr");
       Add(tuning, "async_depth", "2");
@@ -76,11 +79,12 @@ EncoderTuning BuildEncoderTuning(const std::string& encoder_name,
   } else if (encoder_name.starts_with("h264_mf")) {
     Add(tuning, "hw_encoding", encoder_name == "h264_mf_software" ? "0" : "1");
     Add(tuning, "rate_control", "cbr");
-    Add(tuning, "scenario", quality == EncoderQuality::kPerformance ? "display_remoting"
-                                                                     : "archive");
-    Add(tuning, "quality", quality == EncoderQuality::kPerformance ? "60"
-                            : quality == EncoderQuality::kQuality   ? "90"
-                                                                   : "80");
+    Add(tuning, "scenario",
+        quality == EncoderQuality::kPerformance ? "display_remoting" : "archive");
+    Add(tuning, "quality",
+        quality == EncoderQuality::kPerformance ? "60"
+        : quality == EncoderQuality::kQuality   ? "90"
+                                                : "80");
   }
   return tuning;
 }

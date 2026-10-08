@@ -12,7 +12,19 @@ ctest --test-dir build -C Debug --output-on-failure
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-`klip_tests` covers default/invalid configuration, persisted-settings round trips, bounded queue overflow, queue closure, complete audio-frame coverage, keyframe-aware clip selection, timestamp rebasing, configured encoder priority, and coherent concurrent state snapshots.
+CTest runs `klip_core_tests` and `klip_windows_tests`. Together they cover configuration and settings,
+bounded-queue overflow/closure, video timeline and clip selection, timestamp rebasing, configured
+encoder priority, coherent concurrent state snapshots, WAV storage-format conversion (including
+packed 24-bit PCM), partial global-hotkey conflicts, and recording-writer failure behavior.
+
+For local LLVM-MinGW validation without Visual Studio, `tools/bootstrap-validation.ps1` installs a
+locked toolset: LLVM-MinGW 20260922, CMake 4.4.3, Ninja 1.13.2, FFmpeg n8.1.2-267, Windows SDK C++
+10.0.28000.2705, and Dear ImGui 1.92.8. Every archive is SHA-256 checked before extraction and
+cached archives are checked on every run; this avoids a moving `latest` FFmpeg build invalidating
+test-to-test comparisons. The FFmpeg package is pinned to a Windows LGPL shared build at commit
+`gb2f422d306`, close to but not byte-identical with the release workflow's patched upstream n8.1.2
+vcpkg build. `tools/build-validation.ps1` accepts `-EnableTestHooks $false` for a
+production-style Release binary.
 
 The Win64 release workflow also runs `Klip.exe --package-smoke-test` from both a silent
 per-user installation and an extracted portable ZIP on a clean GitHub Windows runner. This
@@ -33,6 +45,161 @@ $env:KLIP_DATA_ROOT = Join-Path $PWD "capture-acceptance"
 $LASTEXITCODE
 Get-Content "$env:KLIP_DATA_ROOT\klip.log"
 ```
+
+Use `--video-only-smoke-test` on a clean data root to confirm WGC capture can start with the
+desktop-audio endpoint intentionally unopened. This verifies the video-only configuration path;
+it does not emulate missing or defective WASAPI drivers. Klip now reports and retries unexpected
+audio-worker/endpoint failures, but physical device removal, reconnection, and selected-microphone
+recovery remain separate hardware checks.
+
+For the automated moving-scene variant, run
+`tools/run-cadence-test.ps1 -Configuration Release -Fps 60 -NativeScene -VideoOnly -Name <unique-name>`.
+It decodes both outputs and, if the MP4 contains the intentionally retained AAC track, verifies
+that the track is silent (at or below -80 dBFS). The current muxer keeps this silent track so users
+can toggle audio capture while recording; that behavior is distinct from capture on a machine with
+no physical audio endpoint.
+
+To verify shortcut registration and route the clip/record actions through Klip's actual window
+message handler during real WGC capture, run:
+
+```powershell
+.\tools\run-cadence-test.ps1 -Configuration Release -Fps 60 -NativeScene -HotkeyActions -Name hotkey-actions-run1
+```
+
+The test registers isolated Ctrl+Alt+Shift+F22/F23/F24 shortcuts, dispatches their corresponding
+`WM_HOTKEY` messages through the app window, and requires both a concurrent replay clip and
+finalized recording to decode. It does not synthesize global keyboard input. For the Windows
+registered-hotkey path, run:
+
+```powershell
+.\tools\run-cadence-test.ps1 -Configuration Release -Fps 60 -NativeScene -WindowCapture -HotkeyInput -Name global-hotkey-input
+```
+
+This sends Ctrl+Alt+Shift+F22/F23/F24 through `SendInput` while Klip starts hidden and captures a
+separate moving test window. It verifies show/hide, save-clip, and record start/stop via OS hotkey
+delivery and decodes both media outputs. It is stronger than posting `WM_HOTKEY` directly, but
+still does not replace physical keyboard confirmation with Fortnite focused.
+
+On a hybrid system with an AMD adapter, run `--amd-hardware-smoke-test` to pin the hidden acceptance
+run to the first hardware DXGI adapter with AMD vendor ID `0x1002` and require `h264_amf`. The test
+must fail rather than silently select NVIDIA or software. Confirm the log names the AMD adapter,
+the selected encoder is `h264_amf`, and both the replay and recording decode. This is a test-only
+adapter override; regular Klip startup still uses automatic adapter selection.
+
+On an Intel graphics system, run the matching Media Foundation hardware path:
+
+```powershell
+.\tools\run-cadence-test.ps1 -Configuration Release -NativeScene -Intel -Fps 60 -Name intel-native60
+```
+
+This pins Direct3D to Intel vendor ID `0x8086`, restricts encoding to `h264_mf` with hardware
+encoding requested, and requires the acceptance log to report that encoder. It must fail instead
+of passing on another vendor or the software fallback. Save the adapter name, feature level, driver,
+and both decoded media outputs with the test record. The test is ready to run, but no Intel GPU has
+been exercised in the current lab. To include audio/video marker checks, omit `-NativeScene` and
+add `-RequireAvMarkers`; the FFplay fixture supplies both streams.
+
+For moving-source cadence, use the native marker and analyze the decoded files on both AMD output
+rates:
+
+```powershell
+.\tools\run-cadence-test.ps1 -Configuration Release -NativeScene -Amd -Fps 60 -Name amd-native60
+.\tools\run-cadence-test.ps1 -Configuration Release -NativeScene -Amd -Fps 120 -Name amd-native120
+```
+
+To force the device-creation path to Direct3D feature level 10.0 on the local adapter and validate
+WGC, encoder startup, clip saving during recording, and final file decode:
+
+```powershell
+.\tools\run-cadence-test.ps1 -Configuration Release -Fps 60 -FeatureLevel10 -Name feature-level-10-0
+```
+
+Passing this forced-level test on a newer GPU is not equivalent to testing a physical older GPU or
+its driver. Record its actual adapter and feature level from `klip.log`.
+
+To exercise the lower-version GPU synchronization fallback even when the current adapter supports
+D3D11.4 fences:
+
+```powershell
+.\tools\run-cadence-test.ps1 -Configuration Release -EventQuerySync -RequireAvMarkers -Name event-query-sync-av
+```
+
+Require `GPU synchronization: forced D3D11 event-query fallback`, valid decoded clip and recording,
+and successful A/V marker checks. This verifies the fallback implementation on the current driver;
+it does not substitute for testing an older physical GPU/driver. Combine `-FeatureLevel10` with
+`-EventQuerySync` to exercise both compatibility fallbacks together at feature level 10.0.
+
+At 120 FPS, repeat the measurement: adapter/source cadence can vary, so one successful run is not
+enough to rule out repeated frames. `-Amd` pins to the first AMD hardware adapter and requires AMF.
+The current lab PC's AMD adapter owns no active display output, so these commands exercise a
+cross-adapter WGC path rather than AMD-native display capture. To certify AMD motion cadence, move
+the test display connection to the AMD adapter, verify the DXGI output-to-adapter mapping, then
+repeat the 60/120 tests. Do not treat the current variable 120 FPS marker results as an encoder
+failure or as proof of AMD-native behavior.
+
+The local validation toolchain and pinned FFmpeg build were rechecked with NVIDIA 120 FPS, AMD
+cross-adapter 60 FPS, software-fallback 720p60, and A/V-marker runs on 2026-09-27. Their decoded
+outputs and measurements are recorded in `docs/universal-windows-compatibility.md`; these add
+repeatability evidence but do not expand the physical hardware matrix.
+
+For release-version-line coverage using the locked FFmpeg n8.1.2 build:
+
+```powershell
+.\tools\bootstrap-validation.ps1
+.\tools\build-validation.ps1 -Configuration Debug
+.\tools\build-validation.ps1 -Configuration Release -EnableTestHooks $false
+.\tools\run-cadence-test.ps1 -Configuration Release -Fps 120 -NativeScene -Name release-ffmpeg812-nvenc120
+.\tools\run-cadence-test.ps1 -Configuration Release -Fps 60 -NativeScene -Amd -Name release-ffmpeg812-amd60
+.\tools\run-cadence-test.ps1 -Configuration Release -Fps 60 -NativeScene -SoftwarePerformance -Name release-ffmpeg812-software60
+.\tools\run-cadence-test.ps1 -Configuration Release -Fps 60 -RequireAvMarkers -Name release-ffmpeg812-av60
+.\tools\build-validation.ps1 -Configuration Release -EnableTestHooks $true
+.\tools\run-cadence-test.ps1 -Configuration Release -Fps 60 -NativeScene -RuntimeEncoderFailure -Name release-ffmpeg812-runtime-recovery
+.\tools\build-validation.ps1 -Configuration Release -EnableTestHooks $false
+```
+
+Use a fresh name if any artifact directory already exists. Runtime fault injection requires hooks ON;
+the final Release configuration must be restored with hooks OFF after the injected-failure run.
+
+To verify actual WGC HWND capture separately from monitor capture, run the same marker fixture with
+`-WindowCapture` at both output rates:
+
+```powershell
+.\tools\run-cadence-test.ps1 -Configuration Release -Fps 60 -NativeScene -WindowCapture -Name window-native60
+.\tools\run-cadence-test.ps1 -Configuration Release -Fps 120 -NativeScene -WindowCapture -Name window-native120
+```
+
+The fixture window must be selected by its exact title/executable label in `klip.log`; the analyzer
+then checks decoded frame IDs and timestamps for both replay and recording. This verifies the WGC
+window path, not game-specific capture restrictions, anti-cheat policy, or exclusive-fullscreen.
+
+To verify the compatibility fallback independently of the local hardware encoders, run:
+
+```powershell
+.\tools\run-cadence-test.ps1 -Configuration Release -Fps 60 -NativeScene -SoftwareFallback -Name mf-software-native60
+.\tools\run-cadence-test.ps1 -Configuration Release -Fps 60 -NativeScene -SoftwarePerformance -Name mf-software-performance720-native60
+.\tools\run-cadence-test.ps1 -Configuration Release -Fps 60 -NativeScene -FallbackDiagnostics -Name encoder-fallback-diagnostics
+```
+
+Both modes must explicitly log `h264_mf_software`; they must not silently pass via NVENC or AMF.
+The fallback-diagnostics mode places a deliberately missing encoder before the software encoder;
+require the dashboard/log to name the rejected codec and reason, then verify both media outputs.
+`-SoftwarePerformance` selects 1280x720/60 at 8 Mbps. The cadence harness decodes every emitted
+MP4, checks that the continuous recording is at least 9.75 seconds (or 59.75 seconds in stress
+mode), requires at least two video keyframes, rejects leftover `.partial` files, and requires a
+terminal capture-acceptance success in the application log. When a backend is forced, it also
+asserts the success log names that exact backend; an acceptance run cannot pass on the wrong GPU or
+software encoder.
+
+To run the FFplay flash/beep A/V check while outputting at 120 FPS, add `-RequireAvMarkers`:
+
+```powershell
+.\tools\run-cadence-test.ps1 -Configuration Release -Fps 120 -SourceFps 120 -RequireAvMarkers -Name av120
+```
+
+This additionally requires at least three matched audio/visual markers per output and rejects
+matches farther than 40 ms apart. The FFplay/window-compositor fixture may itself provide fewer
+than 120 distinct visual updates; report decoded unique-motion rate separately, and do not count
+nominal output FPS as proof of smooth motion.
 
 The mode stays hidden, selects the primary display, disables overlays and microphone capture,
 uses the performance preset at 1920x1080/60 FPS, and lets adapter-aware encoder priority choose
@@ -85,11 +252,19 @@ matrix, TV range, and B-frames when the selected hardware encoder supports them.
 
 ## Windows hardware
 
+For frame-pacing regressions, also follow `docs/frame-pacing.md`. Record **source FPS**
+and **output FPS** separately. A nominal 60 FPS MP4 can contain repeated source
+frames, so `ffprobe` frame-rate metadata alone is not evidence of smooth motion.
+
 Verify on each supported GPU/vendor and intended Windows release:
 
 1. `Klip.exe` starts and the ImGui window renders.
 2. Game/window and display source lists populate; each listed target can be selected and is remembered after reopening Klip.
 3. Targets can be resized and closed without a hang or stale texture use.
+   The automated moving-window resize check is available as
+   `tools/run-cadence-test.ps1 -Configuration Release -Fps 60 -NativeScene -ResizeSource`; it
+   verifies that a recording and concurrent clip remain decodable at the size latched when the
+   capture pipeline began. It does not guarantee no transient frame loss during resize.
 4. Desktop audio activity and level respond.
 5. Microphone capture can be disabled, enabled, and switched.
 6. `Alt+X` toggles the window, `Alt+C` requests a clip, and `Alt+R` toggles continuous recording.
@@ -119,3 +294,28 @@ Release-candidate additions:
   the preset persists.
 
 Do not interpret passing core tests as validation of WGC, WASAPI, GPU drivers, FFmpeg hardware interoperability, or media quality.
+
+## Current release-candidate evidence (2026-09-27)
+
+The portable LLVM-MinGW validation setup and controlled 60/120 FPS capture results are
+recorded in [release-candidate-results.md](release-candidate-results.md). The tests exercise WGC,
+NVIDIA NVENC, AMD AMF on a cross-adapter setup, Media Foundation software fallback, replay saving
+during continuous recording, a 60-second stress recording, and decoded marker motion cadence.
+They do not validate the packaged MSVC build, an actual game-hook comparison, Intel hardware,
+long-term microphone behavior, AMD-native display cadence, physical driver-induced hardware encoder
+failure, or broad Windows/GPU configurations. A separate test-injected NVENC failure now exercises
+the runtime retry/fallback state machine and proves recording continues through a software fallback;
+it is not a substitute for inducing a real driver/backend failure.
+
+The repeatable runner also has a decoded one-minute A/V drift test. On the available 239 Hz
+Windows 11 display, the recording's 60 visual/audio marker pairs measured +0.66 ms/min drift and
+-3 ms median audio offset. Its FFplay fixture playback had 23.6% repeated decoded images despite
+clean 60 FPS source media; a same-machine native motion test had 60 unique transitions/s and no
+repeats. Validate the actual source/compositor cadence independently of encoded FPS, then test with
+game content before treating that fixture's repeated images as a Klip encoding defect. See the
+complete measurements and machine details in `docs/release-candidate-results.md`.
+
+Run the repository's portable checks from PowerShell with
+`tools/build-validation.ps1 -Configuration Debug` and `tools/build-validation.ps1
+-Configuration Release`. Those scripts build Klip and run both `klip_core_tests` and
+`klip_windows_tests` via CTest.

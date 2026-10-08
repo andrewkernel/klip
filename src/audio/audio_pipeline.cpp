@@ -1,7 +1,7 @@
 #include "klip/audio/audio_pipeline.h"
 
-#include <functiondiscoverykeys_devpkey.h>
 #include <audiopolicy.h>
+#include <functiondiscoverykeys_devpkey.h>
 #include <ksmedia.h>
 #include <propkey.h>
 #include <propsys.h>
@@ -13,6 +13,7 @@
 #include <sstream>
 #include <stdexcept>
 
+#include "klip/audio/audio_recovery_policy.h"
 #include "klip/core/audio_timeline.h"
 
 extern "C" {
@@ -60,13 +61,13 @@ class AudioActivationHandler final : public IActivateAudioInterfaceCompletionHan
     if (remaining == 0) delete this;
     return remaining;
   }
-  HRESULT STDMETHODCALLTYPE ActivateCompleted(
-      IActivateAudioInterfaceAsyncOperation* operation) override {
+  HRESULT STDMETHODCALLTYPE
+  ActivateCompleted(IActivateAudioInterfaceAsyncOperation* operation) override {
     IUnknown* activated = nullptr;
     result_ = operation->GetActivateResult(&activation_result_, &activated);
     if (SUCCEEDED(result_) && SUCCEEDED(activation_result_) && activated != nullptr) {
-      result_ = activated->QueryInterface(__uuidof(IAudioClient),
-                                          reinterpret_cast<void**>(&client_));
+      result_ =
+          activated->QueryInterface(__uuidof(IAudioClient), reinterpret_cast<void**>(&client_));
     } else if (SUCCEEDED(result_)) {
       result_ = activation_result_;
     }
@@ -103,8 +104,8 @@ HRESULT ActivateProcessLoopback(DWORD process_id, winrt::com_ptr<IAudioClient>& 
 
   auto* handler = new AudioActivationHandler();
   winrt::com_ptr<IActivateAudioInterfaceAsyncOperation> operation;
-  const auto started = ActivateAudioInterfaceAsync(
-      kProcessLoopbackDevice, __uuidof(IAudioClient), &activation, handler, operation.put());
+  const auto started = ActivateAudioInterfaceAsync(kProcessLoopbackDevice, __uuidof(IAudioClient),
+                                                   &activation, handler, operation.put());
   if (FAILED(started)) {
     handler->Release();
     return started;
@@ -128,8 +129,7 @@ std::string ProcessName(DWORD process_id) {
       WideCharToMultiByte(CP_UTF8, 0, filename.c_str(), -1, nullptr, 0, nullptr, nullptr);
   if (required <= 0) return {};
   std::string output(static_cast<std::size_t>(required), '\0');
-  WideCharToMultiByte(CP_UTF8, 0, filename.c_str(), -1, output.data(), required, nullptr,
-                      nullptr);
+  WideCharToMultiByte(CP_UTF8, 0, filename.c_str(), -1, output.data(), required, nullptr, nullptr);
   output.pop_back();
   return output;
 }
@@ -146,6 +146,8 @@ bool AudioPipeline::Initialize(std::int64_t qpc_origin, std::int64_t qpc_frequen
   Shutdown();
   config_ = config;
   microphone_running_.store(false, std::memory_order_release);
+  desktop_retry_after_ = {};
+  microphone_retry_after_ = {};
   desktop_enabled_.store(config.desktop_audio_enabled, std::memory_order_release);
   desktop_gain_.store(static_cast<float>(std::clamp(config.desktop_audio_gain, 0.0, 2.0)),
                       std::memory_order_release);
@@ -165,10 +167,16 @@ bool AudioPipeline::Initialize(std::int64_t qpc_origin, std::int64_t qpc_frequen
     logger_.Warning(applications_error.ToString());
   if (!encoder_.Initialize(config.audio_bitrate, error)) return false;
   running_.store(true, std::memory_order_release);
-  if (!StartDesktop(error)) {
-    running_.store(false, std::memory_order_release);
-    encoder_.Shutdown();
-    return false;
+  if (config.desktop_audio_enabled) {
+    if (!StartDesktop(error)) {
+      logger_.Warning(
+          error.ToString() +
+          "; video capture will continue without desktop audio until it is enabled again");
+      state_.SetError(error);
+      error = {};
+    }
+  } else {
+    logger_.Info("Desktop audio is disabled; capture is starting without an audio endpoint");
   }
   if (config.microphone_enabled && selected_microphone_ >= 0) {
     Error microphone_error;
@@ -246,7 +254,17 @@ void AudioPipeline::SetDesktopGain(float gain) noexcept {
   desktop_gain_.store(std::clamp(gain, 0.0F, 2.0F), std::memory_order_release);
 }
 
-void AudioPipeline::SetDesktopEnabled(bool enabled) noexcept {
+void AudioPipeline::SetDesktopEnabled(bool enabled) {
+  std::scoped_lock lock(control_mutex_);
+  if (enabled && running_.load(std::memory_order_acquire) && !desktop_.thread.joinable()) {
+    Error error;
+    if (!StartDesktop(error)) {
+      state_.SetError(error);
+      logger_.ErrorMessage(error);
+    } else {
+      state_.ClearError(ErrorComponent::kAudio);
+    }
+  }
   desktop_enabled_.store(enabled, std::memory_order_release);
   config_.desktop_audio_enabled = enabled;
   logger_.Info(enabled ? "Desktop audio enabled" : "Desktop audio muted");
@@ -257,6 +275,7 @@ void AudioPipeline::SetExcludedApplication(std::string executable_name) {
   if (config_.excluded_audio_process == executable_name) return;
   config_.excluded_audio_process = std::move(executable_name);
   if (!running_.load(std::memory_order_acquire)) return;
+  if (!desktop_enabled_.load(std::memory_order_acquire)) return;
   StopContext(desktop_);
   {
     std::scoped_lock buffer_lock(desktop_buffer_.mutex);
@@ -352,14 +371,15 @@ bool AudioPipeline::EnumerateAudioApplications(Error& error) {
   audio_applications_.clear();
   winrt::com_ptr<IMMDevice> device;
   auto result = enumerator_->GetDefaultAudioEndpoint(eRender, eMultimedia, device.put());
-  if (FAILED(result)) result = enumerator_->GetDefaultAudioEndpoint(eRender, eConsole, device.put());
+  if (FAILED(result))
+    result = enumerator_->GetDefaultAudioEndpoint(eRender, eConsole, device.put());
   if (FAILED(result)) {
     error = MakeHresultError(ErrorComponent::kAudio, "open render endpoint sessions", result);
     return false;
   }
   winrt::com_ptr<IAudioSessionManager2> manager;
-  result = device->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr,
-                            manager.put_void());
+  result =
+      device->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr, manager.put_void());
   if (FAILED(result)) {
     error = MakeHresultError(ErrorComponent::kAudio, "open audio session manager", result);
     return false;
@@ -384,11 +404,10 @@ bool AudioPipeline::EnumerateAudioApplications(Error& error) {
       continue;
     auto name = ProcessName(process_id);
     if (name.empty()) continue;
-    const auto duplicate = std::find_if(audio_applications_.begin(), audio_applications_.end(),
-                                        [&](const auto& application) {
-                                          return _stricmp(application.name.c_str(), name.c_str()) ==
-                                                 0;
-                                        });
+    const auto duplicate = std::find_if(
+        audio_applications_.begin(), audio_applications_.end(), [&](const auto& application) {
+          return _stricmp(application.name.c_str(), name.c_str()) == 0;
+        });
     if (duplicate == audio_applications_.end())
       audio_applications_.push_back({process_id, std::move(name)});
   }
@@ -406,8 +425,7 @@ bool AudioPipeline::OpenContext(CaptureContext& context, const std::wstring& dev
     result = ActivateProcessLoopback(excluded_process_id, context.client);
   } else {
     result = device_id.empty()
-                 ? enumerator_->GetDefaultAudioEndpoint(eRender, eMultimedia,
-                                                        context.device.put())
+                 ? enumerator_->GetDefaultAudioEndpoint(eRender, eMultimedia, context.device.put())
                  : enumerator_->GetDevice(device_id.c_str(), context.device.put());
   }
   // Some systems do not assign a separate multimedia endpoint. Fall back to the
@@ -433,8 +451,12 @@ bool AudioPipeline::OpenContext(CaptureContext& context, const std::wstring& dev
     // convert. Use Klip's native mixer format so this path avoids an extra libswresample pass.
     context.format = static_cast<WAVEFORMATEX*>(CoTaskMemAlloc(sizeof(WAVEFORMATEX)));
     if (context.format == nullptr) {
-      error = Error{ErrorComponent::kAudio, "allocate process-loopback format",
-                    "CoTaskMemAlloc failed", {}, {}, {}};
+      error = Error{ErrorComponent::kAudio,
+                    "allocate process-loopback format",
+                    "CoTaskMemAlloc failed",
+                    {},
+                    {},
+                    {}};
       StopContext(context);
       return false;
     }
@@ -443,16 +465,19 @@ bool AudioPipeline::OpenContext(CaptureContext& context, const std::wstring& dev
     context.format->nChannels = AudioEncoder::kChannels;
     context.format->nSamplesPerSec = AudioEncoder::kSampleRate;
     context.format->wBitsPerSample = 32;
-    context.format->nBlockAlign = static_cast<WORD>(
-        context.format->nChannels * context.format->wBitsPerSample / 8);
-    context.format->nAvgBytesPerSec =
-        context.format->nSamplesPerSec * context.format->nBlockAlign;
+    context.format->nBlockAlign =
+        static_cast<WORD>(context.format->nChannels * context.format->wBitsPerSample / 8);
+    context.format->nAvgBytesPerSec = context.format->nSamplesPerSec * context.format->nBlockAlign;
   } else {
     result = context.client->GetMixFormat(&context.format);
   }
-  if (FAILED(result) || SampleFormat(context.format) == AV_SAMPLE_FMT_NONE) {
-    error = Error{ErrorComponent::kAudio, "inspect audio format",
-                  "WASAPI mix format is unsupported", {}, {}, {}};
+  if (FAILED(result) || ResolveWaveSampleFormat(context.format) == AV_SAMPLE_FMT_NONE) {
+    error = Error{ErrorComponent::kAudio,
+                  "inspect audio format",
+                  "WASAPI mix format is unsupported",
+                  {},
+                  {},
+                  {}};
     StopContext(context);
     return false;
   }
@@ -464,8 +489,8 @@ bool AudioPipeline::OpenContext(CaptureContext& context, const std::wstring& dev
   }
   DWORD initialize_flags = flags | AUDCLNT_STREAMFLAGS_EVENTCALLBACK;
   if (excluded_process_id != 0)
-    initialize_flags |= AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM |
-                        AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
+    initialize_flags |=
+        AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
   result = context.client->Initialize(AUDCLNT_SHAREMODE_SHARED, initialize_flags, 0, 0,
                                       context.format, nullptr);
   if (SUCCEEDED(result)) {
@@ -483,18 +508,23 @@ bool AudioPipeline::OpenContext(CaptureContext& context, const std::wstring& dev
   AVChannelLayout output_layout{};
   av_channel_layout_default(&input_layout, context.format->nChannels);
   av_channel_layout_default(&output_layout, AudioEncoder::kChannels);
-  const auto swr_result = swr_alloc_set_opts2(
-      &context.resampler, &output_layout, AV_SAMPLE_FMT_FLT, AudioEncoder::kSampleRate,
-      &input_layout, SampleFormat(context.format), context.format->nSamplesPerSec, 0, nullptr);
+  const auto swr_result = swr_alloc_set_opts2(&context.resampler, &output_layout, AV_SAMPLE_FMT_FLT,
+                                              AudioEncoder::kSampleRate, &input_layout,
+                                              ResolveWaveSampleFormat(context.format),
+                                              context.format->nSamplesPerSec, 0, nullptr);
   av_channel_layout_uninit(&input_layout);
   av_channel_layout_uninit(&output_layout);
   if (swr_result < 0 || swr_init(context.resampler) < 0) {
-    error = Error{ErrorComponent::kAudio, "initialize audio resampler",
-                  "libswresample rejected the WASAPI format", {}, {}, {}};
+    error = Error{ErrorComponent::kAudio,
+                  "initialize audio resampler",
+                  "libswresample rejected the WASAPI format",
+                  {},
+                  {},
+                  {}};
     StopContext(context);
     return false;
   }
-  const auto sample_format = SampleFormat(context.format);
+  const auto sample_format = ResolveWaveSampleFormat(context.format);
   std::ostringstream format_message;
   format_message << (context.kind == SourceKind::kDesktop ? "Desktop" : "Microphone")
                  << " audio format: " << context.format->nSamplesPerSec << " Hz, "
@@ -506,26 +536,24 @@ bool AudioPipeline::OpenContext(CaptureContext& context, const std::wstring& dev
 
 bool AudioPipeline::StartDesktop(Error& error) {
   desktop_.kind = SourceKind::kDesktop;
+  desktop_.failed.store(false, std::memory_order_release);
   excluded_process_active_.store(false, std::memory_order_release);
   DWORD excluded_process_id = 0;
   if (!config_.excluded_audio_process.empty()) {
-    const auto match = std::find_if(audio_applications_.begin(), audio_applications_.end(),
-                                    [&](const auto& application) {
-                                      return _stricmp(application.name.c_str(),
-                                                     config_.excluded_audio_process.c_str()) == 0;
-                                    });
+    const auto match = std::find_if(
+        audio_applications_.begin(), audio_applications_.end(), [&](const auto& application) {
+          return _stricmp(application.name.c_str(), config_.excluded_audio_process.c_str()) == 0;
+        });
     if (match != audio_applications_.end()) excluded_process_id = match->process_id;
   }
   excluded_process_candidate_id_.store(excluded_process_id, std::memory_order_release);
-  if (!OpenContext(desktop_, L"", AUDCLNT_STREAMFLAGS_LOOPBACK, error,
-                   excluded_process_id)) {
+  if (!OpenContext(desktop_, L"", AUDCLNT_STREAMFLAGS_LOOPBACK, error, excluded_process_id)) {
     if (excluded_process_id == 0) return false;
     logger_.Warning(error.ToString() + "; falling back to complete desktop audio");
     if (!OpenContext(desktop_, L"", AUDCLNT_STREAMFLAGS_LOOPBACK, error)) return false;
   } else if (excluded_process_id != 0) {
     excluded_process_active_.store(true, std::memory_order_release);
-    logger_.Info("Process-loopback exclusion initialized for " +
-                 config_.excluded_audio_process);
+    logger_.Info("Process-loopback exclusion initialized for " + config_.excluded_audio_process);
   }
   desktop_.thread = std::jthread(
       [this](std::stop_token token) { CaptureLoop(desktop_, desktop_buffer_, token); });
@@ -541,6 +569,70 @@ void AudioPipeline::ApplicationAudioLoop(std::stop_token stop_token) noexcept {
       if (stop_token.stop_requested() || !running_.load(std::memory_order_acquire)) break;
 
       std::scoped_lock lock(control_mutex_);
+      const auto recovery_now = std::chrono::steady_clock::now();
+      const bool desktop_needs_recovery = audio_detail::ShouldRetryCapture(
+          desktop_enabled_.load(std::memory_order_acquire),
+          desktop_.failed.load(std::memory_order_acquire), desktop_.thread.joinable(), recovery_now,
+          desktop_retry_after_);
+      if (desktop_needs_recovery) {
+        desktop_.failed.store(false, std::memory_order_release);
+        StopContext(desktop_);
+        {
+          std::scoped_lock buffer_lock(desktop_buffer_.mutex);
+          desktop_buffer_.samples.clear();
+          desktop_buffer_.read_pts = AV_NOPTS_VALUE;
+        }
+        Error restart_error;
+        if (StartDesktop(restart_error)) {
+          desktop_retry_after_ = {};
+          logger_.Info("Desktop audio endpoint recovered");
+        } else {
+          desktop_.failed.store(true, std::memory_order_release);
+          desktop_retry_after_ = recovery_now + std::chrono::seconds(2);
+          state_.SetError(restart_error);
+          logger_.ErrorMessage(restart_error);
+        }
+      }
+
+      const bool microphone_needs_recovery = audio_detail::ShouldRetryCapture(
+          config_.microphone_enabled, microphone_.failed.load(std::memory_order_acquire),
+          microphone_.thread.joinable(), recovery_now, microphone_retry_after_);
+      if (microphone_needs_recovery) {
+        microphone_.failed.store(false, std::memory_order_release);
+        microphone_running_.store(false, std::memory_order_release);
+        StopContext(microphone_);
+        {
+          std::scoped_lock buffer_lock(microphone_buffer_.mutex);
+          microphone_buffer_.samples.clear();
+          microphone_buffer_.read_pts = AV_NOPTS_VALUE;
+        }
+        Error enumeration_error;
+        if (!EnumerateMicrophones(enumeration_error)) logger_.Warning(enumeration_error.ToString());
+        Error restart_error;
+        if (selected_microphone_ >= 0 && StartMicrophone(selected_microphone_, restart_error)) {
+          microphone_running_.store(true, std::memory_order_release);
+          microphone_retry_after_ = {};
+          state_.SetMicrophoneEnabled(true);
+          logger_.Info("Microphone endpoint recovered");
+        } else {
+          microphone_.failed.store(true, std::memory_order_release);
+          microphone_retry_after_ = recovery_now + std::chrono::seconds(2);
+          if (restart_error.operation.empty()) {
+            restart_error = Error{ErrorComponent::kAudio, "recover microphone endpoint",
+                                  "no active microphone endpoint is available"};
+          }
+          state_.SetMicrophoneEnabled(false);
+          state_.SetError(restart_error);
+          logger_.ErrorMessage(restart_error);
+        }
+      }
+      const bool desktop_ready =
+          !desktop_enabled_.load(std::memory_order_acquire) ||
+          (desktop_.thread.joinable() && !desktop_.failed.load(std::memory_order_acquire));
+      const bool microphone_ready =
+          !config_.microphone_enabled || microphone_running_.load(std::memory_order_acquire);
+      if (desktop_ready && microphone_ready) state_.ClearError(ErrorComponent::kAudio);
+
       Error applications_error;
       if (!EnumerateAudioApplications(applications_error)) {
         logger_.Warning(applications_error.ToString());
@@ -550,12 +642,16 @@ void AudioPipeline::ApplicationAudioLoop(std::stop_token stop_token) noexcept {
       if (!config_.excluded_audio_process.empty()) {
         const auto match = std::find_if(
             audio_applications_.begin(), audio_applications_.end(), [&](const auto& application) {
-              return _stricmp(application.name.c_str(),
-                              config_.excluded_audio_process.c_str()) == 0;
+              return _stricmp(application.name.c_str(), config_.excluded_audio_process.c_str()) ==
+                     0;
             });
         if (match != audio_applications_.end()) candidate = match->process_id;
       }
       if (candidate == excluded_process_candidate_id_.load(std::memory_order_acquire)) continue;
+      if (!desktop_enabled_.load(std::memory_order_acquire)) {
+        excluded_process_candidate_id_.store(candidate, std::memory_order_release);
+        continue;
+      }
 
       StopContext(desktop_);
       {
@@ -570,14 +666,12 @@ void AudioPipeline::ApplicationAudioLoop(std::stop_token stop_token) noexcept {
       } else if (candidate == 0) {
         logger_.Info("Muted application is not active; recording complete desktop audio");
       } else {
-        logger_.Info("Muted application session refreshed: " +
-                     config_.excluded_audio_process);
+        logger_.Info("Muted application session refreshed: " + config_.excluded_audio_process);
       }
     }
   } catch (const std::exception& exception) {
-    logger_.Warning(Error{ErrorComponent::kAudio, "monitor application audio",
-                          exception.what()}
-                        .ToString());
+    logger_.Warning(
+        Error{ErrorComponent::kAudio, "monitor application audio", exception.what()}.ToString());
   }
   if (SUCCEEDED(com_result)) CoUninitialize();
 }
@@ -585,6 +679,7 @@ void AudioPipeline::ApplicationAudioLoop(std::stop_token stop_token) noexcept {
 bool AudioPipeline::StartMicrophone(int index, Error& error) {
   if (index < 0 || index >= static_cast<int>(microphones_.size())) return false;
   microphone_.kind = SourceKind::kMicrophone;
+  microphone_.failed.store(false, std::memory_order_release);
   if (!OpenContext(microphone_, microphones_[index].id, 0, error)) return false;
   microphone_.thread = std::jthread(
       [this](std::stop_token token) { CaptureLoop(microphone_, microphone_buffer_, token); });
@@ -611,21 +706,60 @@ void AudioPipeline::StopContext(CaptureContext& context) noexcept {
 void AudioPipeline::CaptureLoop(CaptureContext& context, SourceBuffer& buffer,
                                 std::stop_token stop_token) noexcept {
   const auto com_result = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+  bool worker_failed = false;
+  const auto report_failure = [&](Error error) {
+    if (stop_token.stop_requested()) return;
+    worker_failed = true;
+    context.failed.store(true, std::memory_order_release);
+    state_.SetError(error);
+    logger_.ErrorMessage(error);
+  };
   try {
-    if (FAILED(context.client->Start())) throw std::runtime_error("IAudioClient::Start failed");
+    std::vector<std::int32_t> normalized_pcm24;
+    if (FAILED(com_result)) {
+      report_failure(
+          MakeHresultError(ErrorComponent::kAudio, "initialize audio capture thread", com_result));
+      return;
+    }
+    const auto start_result = context.client->Start();
+    if (FAILED(start_result)) {
+      report_failure(
+          MakeHresultError(ErrorComponent::kAudio, "start WASAPI capture", start_result,
+                           context.kind == SourceKind::kDesktop ? "desktop" : "microphone"));
+      if (SUCCEEDED(com_result)) CoUninitialize();
+      return;
+    }
     while (!stop_token.stop_requested() && running_.load(std::memory_order_acquire)) {
-      if (WaitForSingleObject(context.ready_event.Get(), 100) != WAIT_OBJECT_0) continue;
+      const auto wait_result = WaitForSingleObject(context.ready_event.Get(), 100);
+      if (wait_result == WAIT_TIMEOUT) continue;
+      if (wait_result == WAIT_FAILED) {
+        report_failure(
+            MakeWin32Error(ErrorComponent::kAudio, "wait for WASAPI audio packet", GetLastError(),
+                           context.kind == SourceKind::kDesktop ? "desktop" : "microphone"));
+        break;
+      }
       UINT32 packet_frames = 0;
-      if (FAILED(context.capture->GetNextPacketSize(&packet_frames))) break;
+      auto result = context.capture->GetNextPacketSize(&packet_frames);
+      if (FAILED(result)) {
+        report_failure(
+            MakeHresultError(ErrorComponent::kAudio, "query WASAPI packet size", result,
+                             context.kind == SourceKind::kDesktop ? "desktop" : "microphone"));
+        break;
+      }
       while (packet_frames > 0 && !stop_token.stop_requested()) {
         BYTE* data = nullptr;
         UINT32 frames = 0;
         DWORD flags = 0;
         UINT64 device_position = 0;
         UINT64 qpc_position_100ns = 0;
-        if (FAILED(context.capture->GetBuffer(&data, &frames, &flags, &device_position,
-                                              &qpc_position_100ns)))
+        result = context.capture->GetBuffer(&data, &frames, &flags, &device_position,
+                                            &qpc_position_100ns);
+        if (FAILED(result)) {
+          report_failure(
+              MakeHresultError(ErrorComponent::kAudio, "read WASAPI audio packet", result,
+                               context.kind == SourceKind::kDesktop ? "desktop" : "microphone"));
           break;
+        }
         const auto output_capacity = static_cast<int>(av_rescale_rnd(
             swr_get_delay(context.resampler, context.format->nSamplesPerSec) + frames,
             AudioEncoder::kSampleRate, context.format->nSamplesPerSec, AV_ROUND_UP));
@@ -639,9 +773,24 @@ void AudioPipeline::CaptureLoop(CaptureContext& context, SourceBuffer& buffer,
           std::fill(context.converted.begin(), context.converted.end(), 0.0F);
         } else {
           std::uint8_t* output[] = {reinterpret_cast<std::uint8_t*>(context.converted.data())};
-          const std::uint8_t* input[] = {data};
+          const std::uint8_t* input_data = data;
+          if (context.format->wBitsPerSample == 24) {
+            if (!ConvertPackedPcm24ToS32(context.format, data, frames, normalized_pcm24)) {
+              context.capture->ReleaseBuffer(frames);
+              throw std::runtime_error("could not normalize packed 24-bit WASAPI samples");
+            }
+            input_data = reinterpret_cast<const std::uint8_t*>(normalized_pcm24.data());
+          }
+          const std::uint8_t* input[] = {input_data};
           converted = swr_convert(context.resampler, output, output_capacity, input,
                                   static_cast<int>(frames));
+          if (converted < 0) {
+            context.capture->ReleaseBuffer(frames);
+            report_failure(
+                MakeFfmpegError(ErrorComponent::kAudio, "convert WASAPI audio packet", converted,
+                                context.kind == SourceKind::kDesktop ? "desktop" : "microphone"));
+            break;
+          }
         }
         if (converted > 0) {
           const auto pts = qpc_position_100ns >= static_cast<UINT64>(qpc_origin_)
@@ -650,9 +799,22 @@ void AudioPipeline::CaptureLoop(CaptureContext& context, SourceBuffer& buffer,
           Append(buffer, pts, context.converted.data(), converted,
                  (flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY) != 0);
         }
-        context.capture->ReleaseBuffer(frames);
-        if (FAILED(context.capture->GetNextPacketSize(&packet_frames))) packet_frames = 0;
+        result = context.capture->ReleaseBuffer(frames);
+        if (FAILED(result)) {
+          report_failure(
+              MakeHresultError(ErrorComponent::kAudio, "release WASAPI audio packet", result,
+                               context.kind == SourceKind::kDesktop ? "desktop" : "microphone"));
+          break;
+        }
+        result = context.capture->GetNextPacketSize(&packet_frames);
+        if (FAILED(result)) {
+          report_failure(
+              MakeHresultError(ErrorComponent::kAudio, "query WASAPI packet size", result,
+                               context.kind == SourceKind::kDesktop ? "desktop" : "microphone"));
+          break;
+        }
       }
+      if (worker_failed) break;
     }
   } catch (const std::exception& exception) {
     Error error{ErrorComponent::kAudio,
@@ -661,8 +823,15 @@ void AudioPipeline::CaptureLoop(CaptureContext& context, SourceBuffer& buffer,
                 {},
                 {},
                 context.kind == SourceKind::kDesktop ? "desktop" : "microphone"};
-    state_.SetError(error);
-    logger_.ErrorMessage(error);
+    report_failure(error);
+  } catch (...) {
+    Error error{ErrorComponent::kAudio,
+                "WASAPI capture worker",
+                "an unknown error stopped audio capture",
+                {},
+                {},
+                context.kind == SourceKind::kDesktop ? "desktop" : "microphone"};
+    report_failure(error);
   }
   if (context.client != nullptr) context.client->Stop();
   if (SUCCEEDED(com_result)) CoUninitialize();
@@ -692,12 +861,10 @@ void AudioPipeline::MixerLoop(std::stop_token stop_token) noexcept {
         state_.SetAudio(
             desktop_enabled && Active(desktop_buffer_), Active(microphone_buffer_),
             desktop_enabled
-                ? std::clamp(Level(desktop_buffer_) *
-                                 desktop_gain_.load(std::memory_order_acquire),
+                ? std::clamp(Level(desktop_buffer_) * desktop_gain_.load(std::memory_order_acquire),
                              0.0F, 1.0F)
                 : 0.0F,
-            std::clamp(Level(microphone_buffer_) *
-                           microphone_gain_.load(std::memory_order_acquire),
+            std::clamp(Level(microphone_buffer_) * microphone_gain_.load(std::memory_order_acquire),
                        0.0F, 1.0F));
         continue;
       }
@@ -767,8 +934,7 @@ bool AudioPipeline::MixFrame(std::vector<float>& output, int frame_count, std::i
     }
     source.read_pts += FramesTo100ns(take);
   };
-  if (desktop_required)
-    mix(desktop_buffer_, desktop_gain_.load(std::memory_order_acquire));
+  if (desktop_required) mix(desktop_buffer_, desktop_gain_.load(std::memory_order_acquire));
   if (microphone_required)
     mix(microphone_buffer_, microphone_gain_.load(std::memory_order_acquire));
   for (auto& sample : output) sample = std::clamp(sample, -1.0F, 1.0F);
@@ -835,20 +1001,49 @@ std::int64_t AudioPipeline::Now100ns() const noexcept {
   return av_rescale(current.QuadPart, 10'000'000LL, qpc_frequency_) - qpc_origin_;
 }
 
-AVSampleFormat AudioPipeline::SampleFormat(const WAVEFORMATEX* format) {
+AVSampleFormat ResolveWaveSampleFormat(const WAVEFORMATEX* format) {
   if (format == nullptr) return AV_SAMPLE_FMT_NONE;
   WORD tag = format->wFormatTag;
   WORD bits = format->wBitsPerSample;
   if (tag == WAVE_FORMAT_EXTENSIBLE) {
+    if (format->cbSize < sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX))
+      return AV_SAMPLE_FMT_NONE;
     const auto* extended = reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(format);
     if (extended->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT) tag = WAVE_FORMAT_IEEE_FLOAT;
     if (extended->SubFormat == KSDATAFORMAT_SUBTYPE_PCM) tag = WAVE_FORMAT_PCM;
-    if (extended->Samples.wValidBitsPerSample != 0) bits = extended->Samples.wValidBitsPerSample;
+    if (extended->Samples.wValidBitsPerSample > bits) return AV_SAMPLE_FMT_NONE;
+    // Extensible PCM is left-aligned in its container. 24 valid bits inside a
+    // 32-bit container are S32, not packed 24-bit samples.
   }
   if (tag == WAVE_FORMAT_IEEE_FLOAT && bits == 32) return AV_SAMPLE_FMT_FLT;
   if (tag == WAVE_FORMAT_PCM && bits == 16) return AV_SAMPLE_FMT_S16;
+  if (tag == WAVE_FORMAT_PCM && bits == 24) return AV_SAMPLE_FMT_S32;
   if (tag == WAVE_FORMAT_PCM && bits == 32) return AV_SAMPLE_FMT_S32;
   return AV_SAMPLE_FMT_NONE;
+}
+
+bool ConvertPackedPcm24ToS32(const WAVEFORMATEX* format, const std::uint8_t* input,
+                             std::uint32_t frames, std::vector<std::int32_t>& output) {
+  if (format == nullptr || input == nullptr || format->nChannels == 0 ||
+      format->wBitsPerSample != 24 || format->nBlockAlign < format->nChannels * 3U ||
+      ResolveWaveSampleFormat(format) != AV_SAMPLE_FMT_S32) {
+    return false;
+  }
+  const auto channel_count = static_cast<std::size_t>(format->nChannels);
+  if (frames > output.max_size() / channel_count) return false;
+  output.resize(static_cast<std::size_t>(frames) * channel_count);
+  for (std::uint32_t frame = 0; frame < frames; ++frame) {
+    const auto* frame_data = input + static_cast<std::size_t>(frame) * format->nBlockAlign;
+    for (std::size_t channel = 0; channel < channel_count; ++channel) {
+      const auto* sample_data = frame_data + channel * 3;
+      std::int32_t sample = static_cast<std::int32_t>(sample_data[0]) |
+                            (static_cast<std::int32_t>(sample_data[1]) << 8) |
+                            (static_cast<std::int32_t>(sample_data[2]) << 16);
+      if (sample >= 0x00800000) sample -= 0x01000000;
+      output[static_cast<std::size_t>(frame) * channel_count + channel] = sample * 256;
+    }
+  }
+  return true;
 }
 
 std::string AudioPipeline::WideToUtf8(const std::wstring& value) {

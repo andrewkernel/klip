@@ -6,6 +6,7 @@
 #include <winrt/base.h>
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 #include "klip/core/error.h"
@@ -20,7 +21,9 @@ class D3dDevice {
   D3dDevice(const D3dDevice&) = delete;
   D3dDevice& operator=(const D3dDevice&) = delete;
 
-  bool Initialize(HWND window, Error& error);
+  bool Initialize(HWND window, Error& error,
+                  std::optional<std::uint32_t> adapter_vendor_id = std::nullopt,
+                  std::optional<D3D_FEATURE_LEVEL> requested_feature_level = std::nullopt);
   void Shutdown() noexcept;
   bool Resize(UINT width, UINT height, Error& error);
   bool BeginFrame(const float clear_color[4]);
@@ -33,6 +36,7 @@ class D3dDevice {
   }
   [[nodiscard]] std::uint32_t AdapterVendorId() const noexcept { return adapter_vendor_id_; }
   [[nodiscard]] const std::wstring& AdapterName() const noexcept { return adapter_name_; }
+  [[nodiscard]] D3D_FEATURE_LEVEL FeatureLevel() const noexcept { return feature_level_; }
 
  private:
   bool CreateRenderTarget(Error& error);
@@ -42,6 +46,7 @@ class D3dDevice {
   winrt::com_ptr<IDXGISwapChain> swap_chain_;
   winrt::com_ptr<ID3D11RenderTargetView> render_target_;
   std::uint32_t adapter_vendor_id_ = 0;
+  D3D_FEATURE_LEVEL feature_level_ = static_cast<D3D_FEATURE_LEVEL>(0);
   std::wstring adapter_name_;
 };
 

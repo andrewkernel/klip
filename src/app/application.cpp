@@ -1,13 +1,15 @@
 #include "klip/app/application.h"
-
-#include "klip/core/config_store.h"
+#include "klip/core/path_text.h"
 
 #include <shellapi.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <thread>
+
+#include "klip/core/config_store.h"
 
 namespace klip {
 namespace {
@@ -32,6 +34,47 @@ bool SameHotkeys(const HotkeyConfig& left, const HotkeyConfig& right) {
          left.toggle_ui_virtual_key == right.toggle_ui_virtual_key;
 }
 
+bool SendTestHotkeyChord(WORD virtual_key) {
+  std::array<INPUT, 8> inputs{};
+  const std::array<WORD, 4> chord{VK_CONTROL, VK_MENU, VK_SHIFT, virtual_key};
+  for (std::size_t index = 0; index < chord.size(); ++index) {
+    inputs[index].type = INPUT_KEYBOARD;
+    inputs[index].ki.wVk = chord[index];
+  }
+  for (std::size_t index = 0; index < chord.size(); ++index) {
+    auto& input = inputs[chord.size() + index];
+    input.type = INPUT_KEYBOARD;
+    input.ki.wVk = chord[chord.size() - index - 1];
+    input.ki.dwFlags = KEYEVENTF_KEYUP;
+  }
+  if (SendInput(static_cast<UINT>(inputs.size()), inputs.data(), sizeof(INPUT)) == inputs.size())
+    return true;
+
+  std::array<INPUT, 4> releases{};
+  for (std::size_t index = 0; index < releases.size(); ++index) {
+    releases[index].type = INPUT_KEYBOARD;
+    releases[index].ki.wVk = chord[chord.size() - index - 1];
+    releases[index].ki.dwFlags = KEYEVENTF_KEYUP;
+  }
+  SendInput(static_cast<UINT>(releases.size()), releases.data(), sizeof(INPUT));
+  return false;
+}
+
+std::string FeatureLevelName(D3D_FEATURE_LEVEL level) {
+  switch (level) {
+    case D3D_FEATURE_LEVEL_11_1:
+      return "11.1";
+    case D3D_FEATURE_LEVEL_11_0:
+      return "11.0";
+    case D3D_FEATURE_LEVEL_10_1:
+      return "10.1";
+    case D3D_FEATURE_LEVEL_10_0:
+      return "10.0";
+    default:
+      return "unknown";
+  }
+}
+
 }  // namespace
 
 KlipApplication::KlipApplication(AppConfig config, std::filesystem::path settings_path)
@@ -39,7 +82,7 @@ KlipApplication::KlipApplication(AppConfig config, std::filesystem::path setting
       settings_path_(std::move(settings_path)),
       media_buffer_(config_.rolling_buffer_seconds, config_.rolling_buffer_bytes),
       recording_writer_(state_, logger_),
-      packet_router_(media_buffer_, recording_writer_),
+      packet_router_(media_buffer_, recording_writer_, state_, logger_),
       audio_encoder_(packet_router_, logger_),
       video_encoder_(packet_router_, state_, logger_),
       capture_(video_encoder_, state_, logger_),
@@ -49,14 +92,25 @@ KlipApplication::KlipApplication(AppConfig config, std::filesystem::path setting
 KlipApplication::~KlipApplication() noexcept { Shutdown(); }
 
 bool KlipApplication::Initialize(HINSTANCE instance, int show_command, Error& error,
-                                 bool register_hotkeys) {
-  // Preview is the in-app replacement for the Windows capture highlight. Normalize older or
-  // hand-edited settings so enabling the preview never leaves the yellow border visible too.
-  if (config_.capture_preview_enabled) config_.capture_border = false;
+                                 bool register_hotkeys,
+                                 std::optional<std::uint32_t> graphics_vendor_id,
+                                 std::optional<D3D_FEATURE_LEVEL> graphics_feature_level,
+                                 bool force_event_query_sync,
+                                 bool inject_runtime_encoder_failure) {
+  force_event_query_sync_ = force_event_query_sync;
+#if defined(KLIP_ENABLE_TEST_HOOKS)
+  inject_runtime_encoder_failure_ = inject_runtime_encoder_failure;
+#else
+  (void)inject_runtime_encoder_failure;
+#endif
   const auto issues = ValidateConfig(config_);
   if (!issues.empty()) {
-    error = Error{ErrorComponent::kApplication, "validate configuration",
-                  issues.front().field + " " + issues.front().message, {}, {}, {}};
+    error = Error{ErrorComponent::kApplication,
+                  "validate configuration",
+                  issues.front().field + " " + issues.front().message,
+                  {},
+                  {},
+                  {}};
     return false;
   }
   if (config_.output_directory.is_relative()) {
@@ -72,14 +126,18 @@ bool KlipApplication::Initialize(HINSTANCE instance, int show_command, Error& er
   if (!config_.log_path.parent_path().empty())
     std::filesystem::create_directories(config_.log_path.parent_path(), directory_error);
   if (directory_error) {
-    error = Error{ErrorComponent::kApplication, "create log directory",
-                  directory_error.message(), {}, {}, config_.log_path.parent_path().string()};
+    error = Error{ErrorComponent::kApplication,
+                  "create log directory",
+                  directory_error.message(),
+                  {},
+                  {},
+                  PathToUtf8(config_.log_path.parent_path())};
     return false;
   }
   if (!logger_.Open(config_.log_path)) {
     error = Error{
         ErrorComponent::kApplication, "open log", "could not open the configured log file", {}, {},
-        config_.log_path.string()};
+        PathToUtf8(config_.log_path)};
     return false;
   }
   logger_.Info("Klip startup");
@@ -87,7 +145,7 @@ bool KlipApplication::Initialize(HINSTANCE instance, int show_command, Error& er
   state_.SetStatus(CaptureStatus::kStarting, "Starting Klip");
 
   if (!window_.Create(instance, show_command, error) ||
-      !graphics_.Initialize(window_.Handle(), error) ||
+      !graphics_.Initialize(window_.Handle(), error, graphics_vendor_id, graphics_feature_level) ||
       !imgui_.Initialize(window_.Handle(), graphics_.Device(), graphics_.Context(), error) ||
       !StartMediaPipeline(config_, error)) {
     state_.SetError(error);
@@ -97,6 +155,9 @@ bool KlipApplication::Initialize(HINSTANCE instance, int show_command, Error& er
   }
 
   logger_.Info("Graphics adapter: " + WideToUtf8(graphics_.AdapterName()));
+  logger_.Info("Direct3D feature level: " + FeatureLevelName(graphics_.FeatureLevel()));
+  state_.SetGraphicsAdapter(WideToUtf8(graphics_.AdapterName()), graphics_.AdapterVendorId(),
+                            FeatureLevelName(graphics_.FeatureLevel()));
   if (register_hotkeys) {
     window_.SetHotkeyCallback([this](int id) { HandleHotkey(id); });
     Error hotkey_error;
@@ -116,15 +177,14 @@ int KlipApplication::Run() {
   auto next_hotkey_retry = std::chrono::steady_clock::now();
   auto next_metrics_update = std::chrono::steady_clock::now();
   while (window_.PumpMessages()) {
-    const auto ui_deadline =
-        std::chrono::steady_clock::now() + std::chrono::milliseconds(33);
+    const auto ui_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(33);
     const auto now = std::chrono::steady_clock::now();
     if (now >= next_metrics_update) {
       UpdateRollingMetrics();
       next_metrics_update = now + std::chrono::milliseconds(250);
     }
-    bool hotkeys_available = hotkeys_.SaveRegistered() && hotkeys_.RecordRegistered() &&
-                             hotkeys_.ToggleRegistered();
+    bool hotkeys_available =
+        hotkeys_.SaveRegistered() && hotkeys_.RecordRegistered() && hotkeys_.ToggleRegistered();
     if (!hotkeys_available && now >= next_hotkey_retry) {
       Error hotkey_error;
       hotkeys_available = hotkeys_.Register(window_.Handle(), config_.hotkeys, hotkey_error);
@@ -148,8 +208,7 @@ int KlipApplication::Run() {
     const auto capture_preview = capture_.Preview();
     panel_.Render(state_.Snapshot(), config_, commands, hotkeys_available,
                   {capture_preview.texture.get(), capture_preview.overlay_texture.get(),
-                   capture_preview.width,
-                   capture_preview.height});
+                   capture_preview.width, capture_preview.height});
     constexpr float clear_color[4] = {0.06F, 0.07F, 0.09F, 1.0F};
     if (graphics_.BeginFrame(clear_color)) {
       imgui_.Render();
@@ -161,49 +220,200 @@ int KlipApplication::Run() {
   return 0;
 }
 
-int KlipApplication::RunCaptureAcceptanceTest(std::string required_encoder) {
+int KlipApplication::RunCaptureAcceptanceTest(std::string required_encoder,
+                                              std::uint32_t recording_duration_seconds,
+                                              bool exercise_source_switch,
+                                              std::string alternate_window_title,
+                                              bool allow_encoder_recovery,
+                                              bool exercise_hotkey_actions,
+                                              bool exercise_global_hotkey_input) {
   if (!initialized_.load(std::memory_order_acquire)) return 1;
+  if ((exercise_hotkey_actions || exercise_global_hotkey_input) &&
+      (!hotkeys_.SaveRegistered() || !hotkeys_.RecordRegistered() ||
+       !hotkeys_.ToggleRegistered())) {
+    logger_.Warning("HOTKEY ACTION ACCEPTANCE FAILED: one or more test shortcuts did not register");
+    return 3;
+  }
 
   logger_.Info("CAPTURE ACCEPTANCE STARTED");
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+  if (exercise_global_hotkey_input) {
+    const bool initial_visibility = window_.Visible();
+    const bool shown = SendTestHotkeyChord(VK_F24) && window_.PumpMessages() &&
+                       window_.Visible() != initial_visibility;
+    const bool restored = SendTestHotkeyChord(VK_F24) && window_.PumpMessages() &&
+                          window_.Visible() == initial_visibility;
+    if (!shown || !restored) {
+      logger_.Warning("HOTKEY INPUT ACCEPTANCE FAILED: show/hide key did not toggle visibility");
+      return 3;
+    }
+    logger_.Info("HOTKEY INPUT ACCEPTANCE show/hide keys delivered");
+  }
+  const auto recording_duration = std::chrono::seconds(recording_duration_seconds);
+  const auto clip_lead = std::chrono::seconds(
+      std::min<std::uint32_t>(5, std::max<std::uint32_t>(1, recording_duration_seconds / 2)));
+  const auto deadline =
+      std::chrono::steady_clock::now() + recording_duration + std::chrono::seconds(10);
   auto stop_recording_at = std::chrono::steady_clock::time_point{};
   auto next_start_attempt = std::chrono::steady_clock::now();
   bool recording_started = false;
+  bool recording_stop_requested = false;
+  bool clip_requested = false;
+  bool observed_failure = false;
+  bool source_switched = false;
+  bool source_restored = false;
+  CaptureTargetMode original_target_mode = CaptureTargetMode::kGameWindow;
+  std::uint64_t original_source_id = 0;
+  std::uint64_t alternate_source_id = 0;
+  std::string alternate_source_label;
+  auto switch_source_at = std::chrono::steady_clock::time_point{};
+  const auto initial_error_generation = state_.Snapshot().error_generation;
+  std::filesystem::path previous_clip = state_.Snapshot().last_saved_clip;
+  std::filesystem::path previous_recording = state_.Snapshot().last_saved_recording;
   std::string selected_encoder;
 
   while (window_.PumpMessages() && std::chrono::steady_clock::now() < deadline) {
     const auto now = std::chrono::steady_clock::now();
     UpdateRollingMetrics();
     const auto snapshot = state_.Snapshot();
+    if (snapshot.error_generation != initial_error_generation && !allow_encoder_recovery)
+      observed_failure = true;
+    if (recording_started && now < stop_recording_at && !recording_writer_.IsRecording())
+      observed_failure = true;
     if (!snapshot.selected_encoder.empty()) selected_encoder = snapshot.selected_encoder;
 
     if (!recording_started && snapshot.status == CaptureStatus::kBuffering &&
         !snapshot.selected_encoder.empty() && now >= next_start_attempt) {
       Error start_error;
-      if (recording_writer_.StartRecording(start_error)) {
+      if (exercise_global_hotkey_input) {
+        if (!SendTestHotkeyChord(VK_F23) || !window_.PumpMessages()) observed_failure = true;
+      } else if (exercise_hotkey_actions) {
+        if (!PostMessageW(window_.Handle(), WM_HOTKEY, Hotkeys::kToggleRecording, 0) ||
+            !window_.PumpMessages()) {
+          observed_failure = true;
+        }
+      } else if (StartRecording(start_error)) {
         recording_started = true;
-        stop_recording_at = now + std::chrono::seconds(5);
+        stop_recording_at = now + recording_duration;
+        if (exercise_source_switch) {
+          original_target_mode = snapshot.target_mode;
+          original_source_id = snapshot.selected_capture_source_id;
+          switch_source_at = now + std::chrono::seconds(1);
+          const auto& alternate_sources = original_target_mode == CaptureTargetMode::kDisplay
+                                              ? snapshot.game_sources
+                                              : snapshot.display_sources;
+          const auto alternate =
+              std::find_if(alternate_sources.begin(), alternate_sources.end(),
+                           [&](const auto& source) {
+                             return source.id != original_source_id &&
+                                    (alternate_window_title.empty() ||
+                                     source.label.find(alternate_window_title) != std::string::npos);
+                           });
+          if (alternate == alternate_sources.end()) {
+            observed_failure = true;
+            logger_.ErrorMessage(Error{ErrorComponent::kApplication, "source switch acceptance",
+                                       "no alternate capture target"});
+          } else {
+            alternate_source_id = alternate->id;
+            alternate_source_label = alternate->label;
+            logger_.Info("SOURCE SWITCH ACCEPTANCE READY original=" + snapshot.capture_target +
+                         " alternate=" + alternate->label);
+          }
+        }
         logger_.Info("CAPTURE ACCEPTANCE RECORDING encoder=" + snapshot.selected_encoder);
       } else {
         // Codec snapshots can lag the first selected-encoder status by a frame. Retry during the
         // bounded warm-up period instead of treating that expected race as a test failure.
         next_start_attempt = now + std::chrono::milliseconds(250);
       }
+      if ((exercise_hotkey_actions || exercise_global_hotkey_input) && !observed_failure) {
+        recording_started = recording_writer_.IsRecording();
+        if (recording_started) {
+          stop_recording_at = now + recording_duration;
+          logger_.Info(exercise_global_hotkey_input
+                           ? "HOTKEY INPUT ACCEPTANCE record-start key delivered"
+                           : "HOTKEY ACTION ACCEPTANCE recording-start dispatched");
+          logger_.Info("CAPTURE ACCEPTANCE RECORDING encoder=" + snapshot.selected_encoder);
+        } else {
+          observed_failure = true;
+          logger_.Warning("HOTKEY ACTION ACCEPTANCE FAILED: record-start action was not applied");
+        }
+      }
     }
 
-    if (recording_started && now >= stop_recording_at) {
-      recording_writer_.StopRecording();
+    if (recording_started && exercise_source_switch && alternate_source_id != 0) {
+      if (!source_switched && now >= switch_source_at) {
+        const auto alternate_mode = original_target_mode == CaptureTargetMode::kDisplay
+                                        ? CaptureTargetMode::kGameWindow
+                                        : CaptureTargetMode::kDisplay;
+        packet_router_.ResetTimeline(false);
+        capture_.SelectTarget(alternate_mode, alternate_source_id);
+        source_switched = true;
+        logger_.Info("SOURCE SWITCH ACCEPTANCE switched to " + alternate_source_label);
+      } else if (source_switched && !source_restored &&
+                 now >= switch_source_at + std::chrono::seconds(2)) {
+        packet_router_.ResetTimeline(false);
+        capture_.SelectTarget(original_target_mode, original_source_id);
+        source_restored = true;
+        logger_.Info("SOURCE SWITCH ACCEPTANCE restored original target");
+      }
+    }
+
+    if (recording_started && !clip_requested && now >= stop_recording_at - clip_lead) {
+      if (exercise_global_hotkey_input) {
+        clip_requested = SendTestHotkeyChord(VK_F22) && window_.PumpMessages();
+        if (clip_requested) logger_.Info("HOTKEY INPUT ACCEPTANCE save-clip key delivered");
+      } else if (exercise_hotkey_actions) {
+        clip_requested = PostMessageW(window_.Handle(), WM_HOTKEY, Hotkeys::kSaveClip, 0) != FALSE &&
+                         window_.PumpMessages();
+        if (clip_requested) logger_.Info("HOTKEY ACTION ACCEPTANCE save-clip dispatched");
+      } else {
+        clip_requested = clip_writer_.RequestClip();
+      }
+      if (!clip_requested) observed_failure = true;
+    }
+
+    if (recording_started && now >= stop_recording_at && !recording_stop_requested) {
+      if (exercise_global_hotkey_input) {
+        if (!SendTestHotkeyChord(VK_F23) || !window_.PumpMessages())
+          observed_failure = true;
+        if (!state_.Snapshot().finalizing_recording) observed_failure = true;
+        if (!observed_failure) logger_.Info("HOTKEY INPUT ACCEPTANCE record-stop key delivered");
+      } else if (exercise_hotkey_actions) {
+        if (!PostMessageW(window_.Handle(), WM_HOTKEY, Hotkeys::kToggleRecording, 0) ||
+            !window_.PumpMessages())
+          observed_failure = true;
+        if (!state_.Snapshot().finalizing_recording) observed_failure = true;
+        if (!observed_failure) logger_.Info("HOTKEY ACTION ACCEPTANCE recording-stop dispatched");
+      } else {
+        packet_router_.RequestRecordingStop(video_encoder_.SubmittedFrames(),
+                                            audio_encoder_.SubmittedFrames());
+      }
+      recording_stop_requested = true;
+    }
+
+    if (recording_started && recording_stop_requested && !recording_writer_.IsRecording()) {
       const auto finished = state_.Snapshot();
+      if (finished.finalizing_recording || finished.last_saved_recording == previous_recording) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        continue;
+      }
+      observed_failure = observed_failure ||
+                         (finished.error_generation != initial_error_generation &&
+                          (!allow_encoder_recovery || finished.last_error.has_value()));
       std::error_code file_error;
-      const auto bytes = finished.last_saved_recording.empty()
-                             ? 0ULL
-                             : std::filesystem::file_size(finished.last_saved_recording,
-                                                          file_error);
-      if (!file_error && bytes >= 64ULL * 1024ULL &&
+      const auto bytes =
+          finished.last_saved_recording.empty()
+              ? 0ULL
+              : std::filesystem::file_size(finished.last_saved_recording, file_error);
+      const bool clip_saved = clip_requested && !finished.last_saved_clip.empty() &&
+                              finished.last_saved_clip != previous_clip;
+      const bool source_switch_ok = !exercise_source_switch || (source_switched && source_restored);
+      if (!observed_failure && source_switch_ok && clip_saved && !file_error &&
+          bytes >= 64ULL * 1024ULL &&
           (required_encoder.empty() || selected_encoder == required_encoder)) {
-        logger_.Info("CAPTURE ACCEPTANCE PASSED encoder=" + selected_encoder +
-                     " bytes=" + std::to_string(bytes) +
-                     " file=" + finished.last_saved_recording.string());
+        logger_.Info("CAPTURE ACCEPTANCE PASSED encoder=" + selected_encoder + " bytes=" +
+                     std::to_string(bytes) + " file=" + PathToUtf8(finished.last_saved_recording));
+        logger_.Info("CONCURRENT CLIP SAVED file=" + PathToUtf8(finished.last_saved_clip));
         Shutdown();
         return 0;
       }
@@ -211,13 +421,16 @@ int KlipApplication::RunCaptureAcceptanceTest(std::string required_encoder) {
       Error error{ErrorComponent::kApplication,
                   "capture acceptance test",
                   file_error ? file_error.message()
-                             : !required_encoder.empty() && selected_encoder != required_encoder
-                                   ? "capture fell back from the required encoder " +
-                                         required_encoder + " to " + selected_encoder
-                                   : "recording did not produce a complete MP4 of at least 64 KiB",
+                  : !required_encoder.empty() && selected_encoder != required_encoder
+                      ? "capture fell back from the required encoder " + required_encoder + " to " +
+                            selected_encoder
+                  : !source_switch_ok ? "capture source switch did not complete"
+                  : observed_failure  ? "capture reported an error or recording ended early"
+                  : !clip_saved ? "concurrent replay clip was not saved"
+                                : "recording did not produce a complete MP4 of at least 64 KiB",
                   file_error.value(),
                   file_error.message(),
-                  finished.last_saved_recording.string()};
+                  PathToUtf8(finished.last_saved_recording)};
       state_.SetError(error);
       logger_.ErrorMessage(error);
       logger_.Warning("CAPTURE ACCEPTANCE FAILED encoder=" + selected_encoder);
@@ -232,8 +445,8 @@ int KlipApplication::RunCaptureAcceptanceTest(std::string required_encoder) {
   const auto snapshot = state_.Snapshot();
   const auto detail = snapshot.last_error ? snapshot.last_error->ToString()
                                           : "encoder or capture source did not become ready";
-  const Error timeout_error{ErrorComponent::kApplication, "capture acceptance test", detail,
-                            {}, {}, selected_encoder};
+  const Error timeout_error{
+      ErrorComponent::kApplication, "capture acceptance test", detail, {}, {}, selected_encoder};
   state_.SetError(timeout_error);
   logger_.ErrorMessage(timeout_error);
   logger_.Warning("CAPTURE ACCEPTANCE TIMED OUT encoder=" + selected_encoder);
@@ -257,17 +470,15 @@ int KlipApplication::RunSettingsAcceptanceTest() {
     Shutdown();
     return 5;
   }
-  if (config_.target_fps != updated.target_fps ||
-      config_.video_bitrate != updated.video_bitrate ||
+  if (config_.target_fps != updated.target_fps || config_.video_bitrate != updated.video_bitrate ||
       state_.Snapshot().settings_restart_required) {
     logger_.Warning("SETTINGS APPLY ACCEPTANCE FAILED live config did not update");
     Shutdown();
     return 6;
   }
 
-  logger_.Info("SETTINGS APPLY ACCEPTANCE PASSED fps=" +
-               std::to_string(config_.target_fps) + " bitrate=" +
-               std::to_string(config_.video_bitrate));
+  logger_.Info("SETTINGS APPLY ACCEPTANCE PASSED fps=" + std::to_string(config_.target_fps) +
+               " bitrate=" + std::to_string(config_.video_bitrate));
 
   const auto clip_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
   bool clip_requested = false;
@@ -284,8 +495,8 @@ int KlipApplication::RunSettingsAcceptanceTest() {
       std::error_code file_error;
       const auto bytes = std::filesystem::file_size(snapshot.last_saved_clip, file_error);
       if (!file_error && bytes >= 64ULL * 1024ULL) {
-        logger_.Info("SETTINGS APPLY CLIP ACCEPTANCE PASSED bytes=" +
-                     std::to_string(bytes) + " file=" + snapshot.last_saved_clip.string());
+        logger_.Info("SETTINGS APPLY CLIP ACCEPTANCE PASSED bytes=" + std::to_string(bytes) +
+                     " file=" + PathToUtf8(snapshot.last_saved_clip));
         return RunCaptureAcceptanceTest();
       }
       break;
@@ -293,8 +504,7 @@ int KlipApplication::RunSettingsAcceptanceTest() {
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
   }
 
-  const Error clip_error{ErrorComponent::kApplication,
-                         "settings apply clip acceptance",
+  const Error clip_error{ErrorComponent::kApplication, "settings apply clip acceptance",
                          clip_requested ? "clip did not produce a complete MP4 of at least 64 KiB"
                                         : "clip request was not accepted after pipeline refresh"};
   state_.SetError(clip_error);
@@ -316,16 +526,25 @@ void KlipApplication::Shutdown() noexcept {
   logger_.Close();
 }
 
+bool KlipApplication::StartRecording(Error& error) {
+  if (!recording_writer_.StartRecording(error)) return false;
+  // Register the recording queue first so the next forced IDR is captured immediately rather
+  // than waiting for the encoder's normal GOP interval (up to two seconds).
+  video_encoder_.RequestKeyframe();
+  return true;
+}
+
 void KlipApplication::HandleHotkey(int id) {
   if (id == Hotkeys::kSaveClip) {
     clip_writer_.RequestClip();
   } else if (id == Hotkeys::kToggleRecording) {
     Error error;
     if (recording_writer_.IsRecording()) {
-      recording_writer_.StopRecording();
+      packet_router_.RequestRecordingStop(video_encoder_.SubmittedFrames(),
+                                          audio_encoder_.SubmittedFrames());
     } else if (state_.Snapshot().status != CaptureStatus::kBuffering) {
       return;
-    } else if (!recording_writer_.StartRecording(error)) {
+    } else if (!StartRecording(error)) {
       state_.SetError(error);
       logger_.ErrorMessage(error);
     }
@@ -341,24 +560,25 @@ UiCommands KlipApplication::BuildUiCommands() {
           [this] {
             Error error;
             if (recording_writer_.IsRecording()) {
-              recording_writer_.StopRecording();
+              packet_router_.RequestRecordingStop(video_encoder_.SubmittedFrames(),
+                                                  audio_encoder_.SubmittedFrames());
             } else if (state_.Snapshot().status != CaptureStatus::kBuffering) {
               return;
-            } else if (!recording_writer_.StartRecording(error)) {
+            } else if (!StartRecording(error)) {
               state_.SetError(error);
               logger_.ErrorMessage(error);
             }
           },
       .set_target_mode =
           [this](CaptureTargetMode mode) {
-            packet_router_.ResetTimeline();
+            packet_router_.ResetTimeline(false);
             config_.target_mode = mode;
             capture_.SetTargetMode(mode);
             PersistSettings(config_, false);
           },
       .select_capture_source =
           [this](CaptureTargetMode mode, std::uint64_t id, const std::string& label) {
-            packet_router_.ResetTimeline();
+            packet_router_.ResetTimeline(false);
             config_.target_mode = mode;
             if (mode == CaptureTargetMode::kDisplay)
               config_.preferred_display_name = label;
@@ -377,10 +597,6 @@ UiCommands KlipApplication::BuildUiCommands() {
           [this](bool enabled) {
             config_.capture_preview_enabled = enabled;
             capture_.SetPreviewEnabled(enabled);
-            if (enabled && config_.capture_border) {
-              config_.capture_border = false;
-              capture_.SetBorderRequired(false);
-            }
             PersistSettings(config_, false);
           },
       .set_desktop_audio_enabled =
@@ -415,24 +631,24 @@ UiCommands KlipApplication::BuildUiCommands() {
             audio_.SelectMicrophone(index);
             PersistSettings(config_, false);
           },
-      .save_settings =
-          [this](const AppConfig& updated) {
-            return ApplySettings(updated);
-          },
+      .save_settings = [this](const AppConfig& updated) { return ApplySettings(updated); },
       .open_output_folder =
           [this] {
             const auto folder = config_.output_directory.wstring();
             ShellExecuteW(nullptr, L"open", folder.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+          },
+      .open_file =
+          [](const std::filesystem::path& path) {
+            const auto filename = path.wstring();
+            ShellExecuteW(nullptr, L"open", filename.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
           }};
 }
 
 bool KlipApplication::ApplySettings(const AppConfig& updated) {
   AppConfig desired = updated;
-  if (desired.capture_preview_enabled) desired.capture_border = false;
   const auto issues = ValidateConfig(desired);
   if (!issues.empty()) {
-    const auto message = "Invalid setting: " + issues.front().field + " " +
-                         issues.front().message;
+    const auto message = "Invalid setting: " + issues.front().field + " " + issues.front().message;
     const Error error{ErrorComponent::kApplication, "apply settings", message};
     state_.SetError(error);
     state_.SetSettingsStatus(false, message);
@@ -444,7 +660,8 @@ bool KlipApplication::ApplySettings(const AppConfig& updated) {
   const auto snapshot = state_.Snapshot();
   if (snapshot.recording || snapshot.finalizing_recording ||
       snapshot.status == CaptureStatus::kSaving) {
-    state_.SetSettingsStatus(false, "Finish the current clip or recording before applying settings.");
+    state_.SetSettingsStatus(false,
+                             "Finish the current clip or recording before applying settings.");
     return false;
   }
 
@@ -474,10 +691,9 @@ bool KlipApplication::ApplySettings(const AppConfig& updated) {
         hotkeys_.Register(window_.Handle(), previous.hotkeys, hotkey_restore_error);
       }
       if (!restored) {
-        apply_error = Error{ErrorComponent::kApplication,
-                            "restore previous settings",
-                            apply_error.ToString() + "; recovery failed: " +
-                                restore_error.ToString()};
+        apply_error =
+            Error{ErrorComponent::kApplication, "restore previous settings",
+                  apply_error.ToString() + "; recovery failed: " + restore_error.ToString()};
       }
       state_.SetError(apply_error);
       state_.SetSettingsStatus(
@@ -508,7 +724,7 @@ bool KlipApplication::ApplySettings(const AppConfig& updated) {
   capture_.SetPreviewEnabled(desired.capture_preview_enabled);
   capture_.SetBorderRequired(desired.capture_border);
   if (hotkeys_changed) logger_.Info("Global hotkeys updated");
-  state_.ClearError();
+  state_.ClearError(ErrorComponent::kApplication);
   return true;
 }
 
@@ -516,7 +732,7 @@ bool KlipApplication::PersistSettings(const AppConfig& config, bool /*restart_re
   std::string diagnostic;
   if (!SaveConfig(settings_path_, config, diagnostic)) {
     const Error error{ErrorComponent::kApplication, "save settings", diagnostic, {}, {},
-                      settings_path_.string()};
+                      PathToUtf8(settings_path_)};
     state_.SetError(error);
     state_.SetSettingsStatus(false, diagnostic);
     logger_.ErrorMessage(error);
@@ -527,16 +743,22 @@ bool KlipApplication::PersistSettings(const AppConfig& config, bool /*restart_re
   std::filesystem::create_directories(config_.output_directory, ignored);
   std::filesystem::create_directories(config_.recording_directory, ignored);
   state_.SetSettingsStatus(false, "Settings saved and applied.");
-  logger_.Info("Settings saved: " + settings_path_.string());
+  logger_.Info("Settings saved: " + PathToUtf8(settings_path_));
   return true;
 }
 
 bool KlipApplication::StartMediaPipeline(const AppConfig& config, Error& error) {
   media_buffer_.Reconfigure(config.rolling_buffer_seconds, config.rolling_buffer_bytes);
   if (!video_encoder_.Initialize(graphics_.Device(), graphics_.Context(),
-                                 graphics_.AdapterVendorId(), config, error) ||
-      !capture_.Initialize(graphics_.Device(), graphics_.Context(), window_.Handle(), config,
-                           error) ||
+                                 graphics_.AdapterVendorId(), config, error
+#if defined(KLIP_ENABLE_TEST_HOOKS)
+                                 , inject_runtime_encoder_failure_
+#else
+                                 , false
+#endif
+                                 ) ||
+      !capture_.Initialize(graphics_.Device(), graphics_.Context(), window_.Handle(), config, error,
+                           force_event_query_sync_) ||
       !audio_.Initialize(capture_.QpcOrigin(), capture_.QpcFrequency(), config, error) ||
       !clip_writer_.Start(
           config,

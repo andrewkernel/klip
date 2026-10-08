@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <atomic>
 #include <mutex>
 #include <vector>
 
@@ -29,6 +30,9 @@ class AudioEncoder {
               Error& error);
   [[nodiscard]] int FrameSize() const;
   [[nodiscard]] bool SnapshotCodec(CodecSnapshot& snapshot) const;
+  [[nodiscard]] std::uint64_t SubmittedFrames() const noexcept {
+    return submitted_frames_.load(std::memory_order_acquire);
+  }
 
  private:
   void Drain(std::int64_t fallback_pts) noexcept;
@@ -41,6 +45,7 @@ class AudioEncoder {
   AVCodecContext* codec_ = nullptr;
   std::int64_t last_pts_ = AV_NOPTS_VALUE;
   std::int64_t last_dts_ = AV_NOPTS_VALUE;
+  std::atomic<std::uint64_t> submitted_frames_{0};
 };
 
 }  // namespace klip

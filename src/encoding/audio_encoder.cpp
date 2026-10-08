@@ -111,6 +111,7 @@ bool AudioEncoder::Encode(const std::vector<float>& interleaved, int frames, std
     error = MakeFfmpegError(ErrorComponent::kAudioEncoder, "submit audio frame", result);
     return false;
   }
+  submitted_frames_.fetch_add(1, std::memory_order_release);
   Drain(pts_100ns);
   return true;
 }
