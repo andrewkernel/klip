@@ -39,6 +39,7 @@ class ObsEngine {
   bool StartRecording(Error& error);
   void StopRecording();
   bool IsRecording() const;
+  bool HasPendingSaves();
   void Tick();
   void RefreshSources();
 

@@ -5,6 +5,8 @@ $ErrorActionPreference='Stop'
 $repo=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 & "$PSScriptRoot/prepare-obs.ps1"
 if($LASTEXITCODE){exit $LASTEXITCODE}
+& "$PSScriptRoot/prepare-clip-sdk.ps1"
+if($LASTEXITCODE){exit $LASTEXITCODE}
 $deps=Join-Path $repo 'work/validation-tools'
 $llvm=(Get-ChildItem "$deps/llvm" -Directory | Select-Object -First 1).FullName.Replace('\','/')
 $cmake=(Get-ChildItem "$deps/cmake" -Directory | Select-Object -First 1).FullName

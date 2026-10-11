@@ -1,6 +1,6 @@
 # Klip Privacy Notice
 
-Effective July 19, 2026
+Updated October 11, 2026 (2.0.2 beta)
 
 Klip is a local Windows capture application. The current release has no account system,
 advertising, analytics, telemetry, crash-report upload, cloud storage, or automatic media
@@ -21,6 +21,22 @@ Klip writes the following data locally:
 
 The diagnostic log can contain application status, hardware/encoder names, selected capture
 source labels, and error details. It does not intentionally contain recorded video or audio.
+
+## Update checks
+
+Updater-enabled builds can contact `https://klip-ten-zeta.vercel.app` on launch
+to check a signed release manifest. Disable this under Settings → Updates.
+The request includes the normal network information needed to serve it (such
+as IP address and an updater user-agent), but not your clips, audio, hardware
+details, capture targets, settings, or diagnostic logs. The hosting provider
+may retain ordinary access logs under its own privacy policy.
+
+New installer files download only after you choose **download update**. They
+and installer diagnostic logs are stored under `%LOCALAPPDATA%\Klip\Updates`.
+The app authenticates the manifest signature and the installer hash before
+installation. Update checks and downloads are not media uploads.
+
+Trimming operates locally and keeps the original clip. Nothing is uploaded.
 
 ## Sharing and retention
 

@@ -1,11 +1,13 @@
-# Klip 2.0 public beta (current patch 2.0.1)
+# Klip 2.0 public beta (current patch 2.0.2)
 
 2.0.1 fixes memory-limited short replays with a duration-first default. See
 replay-duration-fix.md for decoded capture evidence and quality tradeoffs.
 
 This is a named new-engine edition, not an upgrade-order claim relative to the
-previous legacy 3.0.x builds. There is no automatic updater. Install the complete
-new package; older shortcuts are handled by the root launcher. The legacy
+previous legacy 3.0.x builds. 2.0.2 adds approval-based signed updates and
+lossless trimming; see updater-and-trimming.md. Users on older releases install
+this bootstrap package once; portable copies remain manual. Older shortcuts
+are handled by the root launcher. The legacy
 engine remains in source behind `KLIP_USE_LIBOBS=OFF`, but is not shipped.
 
 ## Build from source on Windows x64
@@ -17,11 +19,11 @@ LLVM/MinGW, CMake, Ninja, Windows SDK and ImGui, validating archive hashes.
 
 ```powershell
 & tools/bootstrap-validation.ps1
-& tools/build-obs.ps1 -Configuration Release -BuildSuffix release-201
-& tools/build-obs.ps1 -Configuration Debug -BuildSuffix release-201
-& tools/run-obs-test.ps1 -Mode game -BuildSuffix release-201 -ReplayDurationTest -NoiseScene -GlobalHotkeys -Name release-check-new
-& packaging/prepare-obs-sources.ps1 -Destination work/release-sources-2.0.1
-& packaging/package-obs-win64.ps1 -BuildDirectory build-obs-Release-release-201 -SourcesDirectory work/release-sources-2.0.1
+& tools/build-obs.ps1 -Configuration Release -BuildSuffix updater-trimmer
+& tools/build-obs.ps1 -Configuration Debug -BuildSuffix updater-trimmer
+& tools/run-obs-test.ps1 -Mode game -BuildSuffix updater-trimmer -ReplayDurationTest -NoiseScene -GlobalHotkeys -Name release-check-new
+& packaging/prepare-obs-sources.ps1 -Destination work/release-sources-2.0.2
+& packaging/package-obs-win64.ps1 -BuildDirectory build-obs-Release-updater-trimmer -SourcesDirectory work/release-sources-2.0.2
 ```
 
 Run from the unpacked source root. Use fresh evidence/output names; do not

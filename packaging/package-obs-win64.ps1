@@ -7,6 +7,10 @@ param(
 $ErrorActionPreference='Stop'
 $repo=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $version=& "$PSScriptRoot/resolve-version.ps1"
+$committedCmake=& git -C $repo show HEAD:CMakeLists.txt
+if($LASTEXITCODE -or ($committedCmake -join "`n") -notmatch ('project\(Klip VERSION '+[regex]::Escape($version)+' LANGUAGES')){
+  throw 'Commit the versioned application source before packaging its corresponding-source archive'
+}
 $build=(Resolve-Path $BuildDirectory).Path
 $sources=(Resolve-Path $SourcesDirectory).Path
 if(-not $OutputDirectory){$OutputDirectory=Join-Path $repo "artifacts/Klip-$version"}
@@ -18,7 +22,15 @@ New-Item -ItemType Directory -Path $OutputDirectory | Out-Null
 $out=(Resolve-Path $OutputDirectory).Path
 $stage=Join-Path $out "Klip-$version-win64"
 New-Item -ItemType Directory $stage | Out-Null
-foreach($name in @('bin','data','obs-plugins','licenses')){Copy-Item -LiteralPath "$build/$name" -Destination $stage -Recurse}
+foreach($name in @('bin','data','obs-plugins','licenses')){
+  foreach($file in Get-ChildItem -LiteralPath "$build/$name" -Recurse -File){
+    if($file.Name -match '^klip_.*tests\.exe$'){continue}
+    $relative=[IO.Path]::GetRelativePath($build,$file.FullName)
+    $target=Join-Path $stage $relative
+    New-Item -ItemType Directory -Force (Split-Path $target) | Out-Null
+    Copy-Item -LiteralPath $file.FullName -Destination $target
+  }
+}
 foreach($name in @('LICENSE','EULA.txt','PRIVACY.md','README.md','THIRD_PARTY_NOTICES.md')){Copy-Item -LiteralPath "$repo/$name" -Destination $stage}
 Copy-Item "$build/obs-pin.json" $stage
 $imgui=(Get-ChildItem "$repo/work/validation-tools/imgui-1.92.8" -Directory | Select-Object -First 1).FullName

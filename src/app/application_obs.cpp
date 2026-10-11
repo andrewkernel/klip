@@ -4,6 +4,7 @@
 #include "klip/ui/event_driven_tabs.h"
 
 #include <shellapi.h>
+#include <commdlg.h>
 #include <psapi.h>
 #include <imgui.h>
 #include <algorithm>
@@ -72,6 +73,8 @@ bool KlipApplication::Initialize(HINSTANCE instance, int show, Error& error, boo
     if (!hotkeys_.Register(window_.Handle(), config_.hotkeys, hotkey_error)) state_.SetError(hotkey_error);
   }
   initialized_ = true;
+  trimmer_.Initialize(window_.Handle());
+  updater_.Initialize(window_.Handle(), settings_path_.parent_path()/L"Updates");
   return true;
 }
 
@@ -83,6 +86,7 @@ int KlipApplication::Run() {
   int benchmark_result = background_benchmark_ ? 2 : 0;
 #endif
   const auto commands = BuildUiCommands();
+  if(config_.check_updates_on_launch) updater_.Check();
   auto next_tick = std::chrono::steady_clock::now();
   auto next_render = next_tick;
   // ImGui trickles queued mouse-position/down/up events across frames, and tabs
@@ -91,6 +95,7 @@ int KlipApplication::Run() {
   unsigned pending_render_frames = kInputRedrawFrames;
   while (window_.PumpMessages()) {
     const auto now = std::chrono::steady_clock::now();
+    if(updater_.InstallationReady()) break;
     engine_.SetDashboardActive(window_.DashboardActive());
     if (window_.TakeRedrawRequest()) pending_render_frames = std::max(pending_render_frames, kInputRedrawFrames);
     if (config_.obs_replay_enabled && now >= next_tick) {
@@ -125,6 +130,16 @@ int KlipApplication::Run() {
         if (!graphics_.Resize(width, height, error)) state_.SetError(error);
       }
       imgui_.BeginFrame();
+      const auto trim=trimmer_.Snapshot();
+      if(trim.image!=trim_image_) {
+        trim_image_=trim.image;trim_texture_=nullptr;
+        if(trim_image_) {
+          D3D11_TEXTURE2D_DESC desc{};desc.Width=static_cast<UINT>(trim_image_->width);desc.Height=static_cast<UINT>(trim_image_->height);
+          desc.MipLevels=1;desc.ArraySize=1;desc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;desc.SampleDesc.Count=1;desc.Usage=D3D11_USAGE_IMMUTABLE;desc.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+          D3D11_SUBRESOURCE_DATA data{trim_image_->rgba.data(),static_cast<UINT>(trim_image_->width*4),0};winrt::com_ptr<ID3D11Texture2D> texture;
+          if(SUCCEEDED(graphics_.Device()->CreateTexture2D(&desc,&data,texture.put())))graphics_.Device()->CreateShaderResourceView(texture.get(),nullptr,trim_texture_.put());
+        }
+      }
       panel_.Render(state_.Snapshot(), config_, commands,
                     hotkeys_.SaveRegistered() && hotkeys_.RecordRegistered() && hotkeys_.ToggleRegistered(), {});
       constexpr float color[4]{0.06F, 0.07F, 0.09F, 1.0F};
@@ -133,6 +148,7 @@ int KlipApplication::Run() {
       next_render = now + std::chrono::milliseconds(33);
     }
     DWORD timeout = config_.obs_replay_enabled ? 250 : INFINITE;
+    if(updater_.Snapshot().phase==UpdatePhase::kStarting)timeout=100;
     if (window_.DashboardActive() && (pending_render_frames || ImGui::IsAnyItemActive())) {
       if (ImGui::IsAnyItemActive()) pending_render_frames = std::max(pending_render_frames, kInputRedrawFrames);
       timeout = 33;
@@ -157,6 +173,10 @@ void KlipApplication::Shutdown() noexcept {
   const bool initialized = initialized_.exchange(false);
   window_.SetHotkeyCallback({});
   hotkeys_.Unregister();
+  updater_.Shutdown();
+  trimmer_.Shutdown();
+  trim_texture_=nullptr;
+  trim_image_.reset();
   StopMediaPipeline();
   imgui_.Shutdown();
   graphics_.Shutdown();
@@ -174,6 +194,7 @@ void KlipApplication::UpdateRollingMetrics() { engine_.Tick(); }
 bool KlipApplication::StartRecording(Error& error) { return engine_.StartRecording(error); }
 
 void KlipApplication::HandleHotkey(int id) {
+  if(updater_.Snapshot().phase==UpdatePhase::kStarting) return;
   if (id == Hotkeys::kSaveClip) {
     if (!engine_.SaveReplayClip()) state_.SetError(Error{ErrorComponent::kClipWriter, "save replay", "OBS replay is not ready, or the save queue is full"});
     engine_.Tick();
@@ -220,7 +241,23 @@ UiCommands KlipApplication::BuildUiCommands() {
       .save_settings = [this](const AppConfig& desired) { return ApplySettings(desired); },
       .open_output_folder = [this] { ShellExecuteW(nullptr, L"open", config_.output_directory.c_str(), nullptr, nullptr, SW_SHOWNORMAL); },
       .open_file = [](const std::filesystem::path& path) { ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL); },
-      .refresh_capture_sources = [this] {engine_.RefreshSources();}};
+      .refresh_capture_sources = [this] {engine_.RefreshSources();},
+      .trim_view = [this] {auto view=trimmer_.Snapshot();view.texture=trim_texture_.get();return view;},
+      .inspect_clip = [this](const std::filesystem::path& path){return trimmer_.Inspect(path);},
+      .choose_clip = [this] {
+        std::array<wchar_t,32768> path{};OPENFILENAMEW dialog{};dialog.lStructSize=sizeof(dialog);dialog.hwndOwner=window_.Handle();
+        dialog.lpstrFile=path.data();dialog.nMaxFile=static_cast<DWORD>(path.size());dialog.lpstrFilter=L"Video clips (*.mkv;*.mp4)\0*.mkv;*.mp4\0\0";
+        dialog.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR;dialog.lpstrTitle=L"Choose a Klip clip to trim";
+        return GetOpenFileNameW(&dialog) ? std::filesystem::path(path.data()) : std::filesystem::path{};
+      },
+      .preview_trim = [this](double position){trimmer_.Preview(position);},
+      .export_trim = [this](double start,double end){trimmer_.Export(start,end);},
+      .cancel_trim = [this]{trimmer_.Cancel();},
+      .update_view = [this]{return updater_.Snapshot();},
+      .check_updates = [this]{updater_.Check();},
+      .download_update = [this]{updater_.Download();},
+      .install_update = [this]{const auto snapshot=state_.Snapshot();if(snapshot.recording||snapshot.finalizing_recording||snapshot.status==CaptureStatus::kSaving||engine_.HasPendingSaves()||trimmer_.Snapshot().busy)return;updater_.BeginInstall();},
+      .cancel_update = [this]{updater_.Cancel();}};
 }
 
 bool KlipApplication::PersistSettings(const AppConfig& config, bool) {

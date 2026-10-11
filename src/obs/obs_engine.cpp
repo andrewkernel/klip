@@ -21,6 +21,10 @@
 #include "klip/obs/replay_policy.h"
 
 namespace klip {
+bool ObsEngine::HasPendingSaves() {
+  std::lock_guard lock(save_mutex_);
+  return saving_ || queued_saves_ != 0;
+}
 namespace {
 using Data = std::unique_ptr<obs_data_t, decltype(&obs_data_release)>;
 using Properties = std::unique_ptr<obs_properties_t, decltype(&obs_properties_destroy)>;

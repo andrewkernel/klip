@@ -520,7 +520,7 @@ std::string SystemHardwareSummary() {
 std::string BuildDiagnostics(const ApplicationSnapshot& snapshot, const AppConfig& config,
                              bool include_private_details) {
   std::ostringstream report;
-  report << "Klip v3.0.3 diagnostics\n"
+  report << "Klip v" KLIP_APP_VERSION " diagnostics\n"
          << "Application build: Windows x64\n"
          << "Windows version: " << WindowsBuildSummary() << '\n'
          << "System: " << SystemHardwareSummary() << '\n'
@@ -615,6 +615,9 @@ void MainPanel::Render(const ApplicationSnapshot& snapshot, const AppConfig& con
 
   RenderDashboard(snapshot, config, commands, hotkeys_available);
   if (settings_open_) RenderSettings(snapshot, config, commands);
+#if defined(KLIP_USE_LIBOBS)
+  if(trim_open_ && !settings_open_) RenderTrimmer(commands);
+#endif
   ImGui::End();
   ImGui::PopStyleVar();
 #if !defined(KLIP_USE_LIBOBS)
@@ -1266,6 +1269,11 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
   if (snapshot.last_saved_clip != last_clip_seen_) {
     last_clip_seen_ = snapshot.last_saved_clip;
     if (!last_clip_seen_.empty()) clip_toast_until_ = now + std::chrono::seconds(6);
+#if defined(KLIP_USE_LIBOBS)
+    if(config.trim_after_save && !trim_open_ && !last_clip_seen_.empty() && commands.inspect_clip && commands.inspect_clip(last_clip_seen_)) {
+      trim_source_=last_clip_seen_;trim_open_=true;trim_start_=0;trim_end_=0;trim_preview_requested_=false;
+    }
+#endif
   }
   if (now < clip_toast_until_) {
     ImGui::SetNextWindowPos({window_max.x - 352.0F, window_min.y + 10.0F}, ImGuiCond_Always);
@@ -1277,6 +1285,12 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
       const auto clip_filename = PathToUtf8(last_clip_seen_.filename());
       ImGui::TextUnformatted(clip_filename.c_str());
       if (ImGui::Button("open clip") && commands.open_file) commands.open_file(last_clip_seen_);
+#if defined(KLIP_USE_LIBOBS)
+      ImGui::SameLine();
+      if(ImGui::Button("trim clip") && commands.inspect_clip && !trim_open_ && commands.inspect_clip(last_clip_seen_)) {
+        trim_source_=last_clip_seen_;trim_open_=true;trim_start_=0;trim_end_=0;trim_preview_requested_=false;
+      }
+#endif
       ImGui::SameLine();
       if (ImGui::Button("show folder") && commands.open_output_folder)
         commands.open_output_folder();
@@ -1323,7 +1337,19 @@ void MainPanel::RenderDashboard(const ApplicationSnapshot& snapshot, const AppCo
     settings_open_ = true;
     ImGui::OpenPopup("settings###klip-settings-modal");
   }
-  constexpr std::string_view version = "v3.0.3";
+  constexpr std::string_view version = "v" KLIP_APP_VERSION;
+#if defined(KLIP_USE_LIBOBS)
+  if(commands.update_view) {
+    const auto update=commands.update_view();
+    if(update.phase==UpdatePhase::kAvailable || update.phase==UpdatePhase::kReady) {
+      ImGui::SetCursorScreenPos({content.x+172,footer_y+10});
+      if(ImGui::Button(update.phase==UpdatePhase::kReady?"update ready":"update available")) {
+        ResetDraft(config);settings_open_=true;requested_settings_tab_=6;
+        ImGui::OpenPopup("settings###klip-settings-modal");
+      }
+    }
+  }
+#endif
   DrawText(draw, label_font, 10.0F,
            {content.x + content_width - TextWidth(label_font, 10.0F, version), footer_y + 21.0F},
            kMutedU32, version);
@@ -1703,6 +1729,22 @@ void MainPanel::RenderSettings(const ApplicationSnapshot& snapshot, const AppCon
       ImGui::InputText("clips folder", clips_path_.data(), clips_path_.size());
       ImGui::InputText("recordings folder", recordings_path_.data(), recordings_path_.size());
 #if defined(KLIP_USE_LIBOBS)
+      ImGui::Checkbox("open trimmer after each saved clip", &draft_.trim_after_save);
+      ImGui::TextWrapped("The editor appears when you open the dashboard; it does not steal focus from your game. The full original is always kept.");
+      const auto saved=snapshot.last_saved_clip;
+      ImGui::BeginDisabled(saved.empty() || trim_open_);
+      if(ImGui::Button("trim latest clip") && commands.inspect_clip && commands.inspect_clip(saved)) {
+        trim_source_=saved;trim_open_=true;trim_start_=0;trim_end_=0;trim_preview_requested_=false;
+        settings_open_=false;ImGui::CloseCurrentPopup();
+      }
+      ImGui::EndDisabled();
+      if(ImGui::Button("choose a clip to trim") && commands.choose_clip && !trim_open_) {
+        const auto chosen=commands.choose_clip();
+        if(!chosen.empty() && commands.inspect_clip && commands.inspect_clip(chosen)) {
+          trim_source_=chosen;trim_open_=true;trim_start_=0;trim_end_=0;trim_preview_requested_=false;
+          settings_open_=false;ImGui::CloseCurrentPopup();
+        }
+      }
       ImGui::InputText("clip filename format", obs_filename_format_.data(), obs_filename_format_.size());
       ImGui::TextColored(kMuted, "OBS tokens: %%CCYY-%%MM-%%DD / %%hh-%%mm-%%ss. Consecutive saves get unique names.");
       ImGui::TextColored(kMuted, "MKV clips and recordings / closing the dashboard keeps capture in the tray.");
@@ -1721,6 +1763,36 @@ void MainPanel::RenderSettings(const ApplicationSnapshot& snapshot, const AppCon
       ImGui::TextDisabled("Preview locally; private details are excluded by default.");
       ImGui::EndTabItem();
     }
+#if defined(KLIP_USE_LIBOBS)
+    if(begin_settings_tab("updates",6)) {
+      ImGui::Checkbox("check for updates on launch", &draft_.check_updates_on_launch);
+      ImGui::TextWrapped("Contacts the Klip website for a signed version manifest. No clips, device details, or settings are sent. Updates download only with your approval.");
+      const auto update=commands.update_view ? commands.update_view() : UpdateView{};
+      ImGui::TextWrapped("%s",update.message.c_str());
+      if(!update.version.empty())ImGui::Text("release / %s",update.version.c_str());
+      const bool active=update.phase==UpdatePhase::kChecking||update.phase==UpdatePhase::kDownloading||update.phase==UpdatePhase::kStarting;
+      ImGui::BeginDisabled(active);
+      if(ImGui::Button("check now") && commands.check_updates)commands.check_updates();
+      ImGui::EndDisabled();
+      if(update.phase==UpdatePhase::kAvailable) {
+        if(update.installed) {if(ImGui::Button("download update") && commands.download_update)commands.download_update();}
+        else ImGui::TextWrapped("This is a portable or developer build. Update it manually from the website; in-app installation is available in installed copies.");
+      }
+      if(update.phase==UpdatePhase::kDownloading) {
+        ImGui::ProgressBar(update.progress,{-1,0});
+        if(ImGui::Button("cancel download") && commands.cancel_update)commands.cancel_update();
+      }
+      if(update.phase==UpdatePhase::kReady) {
+        const bool busy=snapshot.recording||snapshot.finalizing_recording||snapshot.status==CaptureStatus::kSaving||
+                        (commands.trim_view && commands.trim_view().busy);
+        ImGui::BeginDisabled(busy);
+        if(ImGui::Button("update & restart") && commands.install_update)commands.install_update();
+        ImGui::EndDisabled();
+        if(busy)ImGui::TextWrapped("Finish the recording, clip save, or trim before restarting.");
+      }
+      ImGui::EndTabItem();
+    }
+#endif
     ImGui::EndTabBar();
   }
 
@@ -1770,6 +1842,68 @@ void MainPanel::RenderSettings(const ApplicationSnapshot& snapshot, const AppCon
   ImGui::PopStyleColor(2);
   ImGui::PopStyleVar(3);
 }
+
+#if defined(KLIP_USE_LIBOBS)
+void MainPanel::RenderTrimmer(const UiCommands& commands) {
+  if(!commands.trim_view)return;
+  if(!ImGui::IsPopupOpen("trim clip###klip-trimmer"))ImGui::OpenPopup("trim clip###klip-trimmer");
+  auto* viewport=ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(viewport->GetCenter(),ImGuiCond_Appearing,{0.5F,0.5F});
+  ImGui::SetNextWindowSize({std::min(740.0F,viewport->WorkSize.x-24),std::min(690.0F,viewport->WorkSize.y-24)},ImGuiCond_Always);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{24,20});
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,8);
+  ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg,ImVec4{0.01F,0.01F,0.02F,0.76F});
+  bool open=true;
+  if(ImGui::BeginPopupModal("trim clip###klip-trimmer",&open,ImGuiWindowFlags_NoResize)) {
+    ImGui::BeginChild("##trim-content",{0,-48},false);
+    const auto view=commands.trim_view();
+    ImGui::TextUnformatted(PathToUtf8(trim_source_.filename()).c_str());
+    ImGui::TextWrapped("%s",view.message.c_str());
+    if(view.loaded && trim_end_==0)trim_end_=static_cast<float>(view.duration);
+    if(view.loaded && !view.busy && !trim_preview_requested_) {
+      trim_preview_requested_=true;if(commands.preview_trim)commands.preview_trim(0);
+    }
+    if(view.texture && view.image) {
+      const auto width=std::min({static_cast<float>(view.image->width),ImGui::GetContentRegionAvail().x,
+                               260.0F*view.image->width/view.image->height});
+      const auto height=width*static_cast<float>(view.image->height)/static_cast<float>(view.image->width);
+      ImGui::SetCursorPosX(ImGui::GetCursorPosX()+(ImGui::GetContentRegionAvail().x-width)*0.5F);
+      ImGui::Image(reinterpret_cast<ImTextureID>(view.texture),{width,height});
+    } else ImGui::Dummy({std::min(640.0F,ImGui::GetContentRegionAvail().x),180});
+    ImGui::BeginDisabled(!view.loaded||view.busy);
+    ImGui::TextUnformatted("start / seconds");
+    ImGui::SetNextItemWidth(-1);
+    if(ImGui::SliderFloat("##trim-start",&trim_start_,0,std::max(0.0F,static_cast<float>(view.duration)-0.1F),"%.2f s"))
+      trim_start_=std::min(trim_start_,std::max(0.0F,trim_end_-0.1F));
+    if(ImGui::IsItemDeactivatedAfterEdit() && commands.preview_trim)commands.preview_trim(trim_start_);
+    ImGui::TextUnformatted("end / seconds");
+    ImGui::SetNextItemWidth(-1);
+    if(ImGui::SliderFloat("##trim-end",&trim_end_,std::min(0.1F,static_cast<float>(view.duration)),static_cast<float>(view.duration),"%.2f s"))
+      trim_end_=std::max(trim_end_,std::min(static_cast<float>(view.duration),trim_start_+0.1F));
+    if(ImGui::IsItemDeactivatedAfterEdit() && commands.preview_trim)commands.preview_trim(std::max(0.0,static_cast<double>(trim_end_)-0.1));
+    const auto start=TrimKeyframeStart(view.keyframes,trim_start_);
+    const auto end=TrimKeyframeEnd(view.keyframes,trim_end_,view.duration);
+    ImGui::Text("lossless range / %.2f - %.2f s  /  %.2f seconds",start,end,end-start);
+    ImGui::TextWrapped("Both edges snap outward to video keyframes to keep the clip decodable without re-encoding. Usually up to two extra seconds at each edge. All audio tracks are kept.");
+    if(ImGui::Button("save trimmed copy") && commands.export_trim)commands.export_trim(trim_start_,trim_end_);
+    ImGui::SameLine();
+    if(ImGui::Button("watch original") && commands.open_file)commands.open_file(trim_source_);
+    ImGui::EndDisabled();
+    if(!view.output.empty() && !view.busy) {
+      ImGui::TextColored(kMint,"saved / %.2f seconds",view.actual_end-view.actual_start);
+      if(ImGui::Button("open trimmed copy") && commands.open_file)commands.open_file(view.output);
+    }
+    ImGui::EndChild();
+    ImGui::Separator();
+    if(view.busy) {if(ImGui::Button("cancel operation") && commands.cancel_trim)commands.cancel_trim();}
+    else if(ImGui::Button("done / keep original")){open=false;ImGui::CloseCurrentPopup();}
+    ImGui::EndPopup();
+  }
+  if(!open){if(commands.cancel_trim)commands.cancel_trim();trim_open_=false;}
+  ImGui::PopStyleColor();
+  ImGui::PopStyleVar(2);
+}
+#endif
 
 void MainPanel::RenderCompatibility(const ApplicationSnapshot& snapshot, const AppConfig& config,
                                    const UiCommands& commands) {

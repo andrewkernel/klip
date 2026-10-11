@@ -7,7 +7,7 @@ Win32/D3D11/ImGui dashboard and customizable global shortcuts.
 
 ## Public beta
 
-This is the new-engine edition (current patch 2.0.1), replacing the legacy
+This is the new-engine edition (current patch 2.0.2), replacing the legacy
 3.0.x downloads. It is unsigned, and compatibility/performance vary by game,
 GPU and drivers. No universal OBS-parity, zero-overhead or stable-release
 claim is made. NVIDIA RTX 3060 capture has been tested; broader hardware,
@@ -26,19 +26,27 @@ live microphone and clean-machine testing remain incomplete.
 - Duration-first replay fits video bitrate to the chosen time and memory budget.
   Allow the buffer to warm up after starting/changing capture. Constant quality
   is optional and can still shorten clips. Clips and recordings use MKV.
+- Trim saved clips with a scrub preview and start/end controls. Exports snap
+  outward to keyframes and preserve encoded video/audio in a separate MKV copy.
+- Check for signed updates in Settings → Updates. Installed copies download
+  only with approval and offer update & restart when recording/saving is idle.
 
 ## Download and run
 
 [Website](https://klip-ten-zeta.vercel.app/) ·
 [Releases and sources](https://github.com/andrewkernel/klip/releases)
 
-Install the complete `Klip-2.0.1-win64-setup.exe`, or extract the complete
+Install the complete `Klip-2.0.2-win64-setup.exe`, or extract the complete
 portable ZIP and open its root `Klip.exe`. Keep bin, data, obs-plugins and
 licenses together. Requires Windows x64, supported graphics drivers and the
 [Microsoft VC++ 2015–2022 x64 runtime](https://aka.ms/vs/17/release/vc_redist.x64.exe).
 Verify the release SHA256SUMS; do not disable antivirus or Windows security.
 Close old Klip instances before upgrading. The × button hides the dashboard;
 use the tray menu's Quit Klip to stop capture and exit.
+
+Users on 2.0.1 or legacy 3.0.x need this installer once to get the updater.
+Portable copies still update manually. Release manifests are signed, but the
+executables are not Authenticode-signed; Windows reputation warnings can remain.
 
 Media, settings and logs stay local. Review logs for private target/device
 names before sharing. See [privacy](PRIVACY.md).

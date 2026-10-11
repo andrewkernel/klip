@@ -22,6 +22,9 @@
 #include "klip/platform/dashboard_activity.h"
 #include "klip/obs/encoder_policy.h"
 #include "klip/obs/replay_policy.h"
+#include "klip/update/manifest.h"
+#include "klip/clips/trim_range.h"
+#include <limits>
 
 namespace {
 
@@ -157,6 +160,8 @@ void TestAudioFrameCoverage() {
 void TestConfigRoundTrip() {
   auto path = std::filesystem::temp_directory_path() / "klip-core-test-settings.ini";
   klip::AppConfig saved;
+  saved.check_updates_on_launch = false;
+  saved.trim_after_save = true;
   saved.obs_replay_enabled = false;
   saved.obs_encoder_id = "obs_nvenc_h264_tex";
   saved.obs_cq = 21;
@@ -208,6 +213,8 @@ void TestConfigRoundTrip() {
 
   klip::AppConfig loaded;
   CHECK(klip::LoadConfig(path, loaded, diagnostic));
+  CHECK(!loaded.check_updates_on_launch);
+  CHECK(loaded.trim_after_save);
   CHECK(!loaded.obs_replay_enabled);
   CHECK(loaded.obs_encoder_id == saved.obs_encoder_id);
   CHECK(loaded.obs_cq == 21 && loaded.obs_display_method == 2);
@@ -651,6 +658,29 @@ void TestErrorOwnershipAndGeneration() {
 }  // namespace
 
 int main() {
+  CHECK(klip::NewerVersion("2.0.10","2.0.9"));
+  CHECK(!klip::NewerVersion("2.0.1","2.0.1"));
+  CHECK(!klip::NewerVersion("2.0.0","2.0.1"));
+  CHECK(!klip::NewerVersion("2.01.1","2.0.1"));
+  CHECK(!klip::NewerVersion("v2.0.2","2.0.1"));
+  CHECK(!klip::NewerVersion("2.0.2-beta","2.0.1"));
+  const auto manifest="klip-update-v1\n2.0.2\nhttps://klip-ten-zeta.vercel.app/Klip-2.0.2-win64-setup.exe\n"+std::string(64,'a')+"\n65536\n1000\n"+std::string(128,'a')+"\n";
+  CHECK(klip::ParseUpdateManifest(manifest,900).has_value());
+  CHECK(!klip::ParseUpdateManifest(manifest,1001));
+  CHECK(!klip::ParseUpdateManifest(manifest+"extra\n",900));
+  auto bad=manifest;bad.replace(bad.find("https"),5,"http");CHECK(!klip::ParseUpdateManifest(bad,900));
+  bad=manifest;bad.replace(bad.find("65536"),5,"65535");CHECK(!klip::ParseUpdateManifest(bad,900));
+  bad=manifest;bad.replace(bad.find("klip-ten-zeta"),13,"evil-host");CHECK(!klip::ParseUpdateManifest(bad,900));
+  CHECK(klip::DecodeHex("ff00").size()==2);
+  CHECK(klip::DecodeHex("FF00").empty());
+  CHECK(klip::ValidTrimRange(1,2,30));
+  CHECK(!klip::ValidTrimRange(2,1,30));
+  CHECK(!klip::ValidTrimRange(-1,2,30));
+  CHECK(!klip::ValidTrimRange(0,31,30));
+  CHECK(!klip::ValidTrimRange(std::numeric_limits<double>::quiet_NaN(),2,30));
+  CHECK(klip::TrimKeyframeStart({0,2,4,6},3.2)==2);
+  CHECK(klip::TrimKeyframeEnd({0,2,4,6},3.2,8)==4);
+  CHECK(klip::TrimKeyframeEnd({0,2,4,6},7,8)==8);
   const auto balanced_obs = klip::ObsNvencPolicyFor(klip::EncoderQuality::kBalanced);
   CHECK(std::string(balanced_obs.preset) == "p5" && std::string(balanced_obs.multipass) == "qres" && balanced_obs.adaptive_quantization);
   const auto performance_obs = klip::ObsNvencPolicyFor(klip::EncoderQuality::kPerformance);

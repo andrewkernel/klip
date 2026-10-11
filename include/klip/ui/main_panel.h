@@ -9,6 +9,10 @@
 
 #include "klip/core/application_state.h"
 #include "klip/core/config.h"
+#if defined(KLIP_USE_LIBOBS)
+#include "klip/clips/trimmer.h"
+#include "klip/update/updater.h"
+#endif
 
 namespace klip {
 
@@ -36,6 +40,16 @@ struct UiCommands {
   std::function<void()> open_output_folder;
   std::function<void(const std::filesystem::path&)> open_file;
   std::function<void()> refresh_capture_sources;
+#if defined(KLIP_USE_LIBOBS)
+  std::function<TrimView()> trim_view;
+  std::function<bool(const std::filesystem::path&)> inspect_clip;
+  std::function<std::filesystem::path()> choose_clip;
+  std::function<void(double)> preview_trim;
+  std::function<void(double,double)> export_trim;
+  std::function<void()> cancel_trim;
+  std::function<UpdateView()> update_view;
+  std::function<void()> check_updates, download_update, install_update, cancel_update;
+#endif
 };
 
 class MainPanel {
@@ -55,6 +69,13 @@ class MainPanel {
   void UpdateSetupTest(const ApplicationSnapshot& snapshot, const UiCommands& commands);
   void RenderCapturePreview(const CapturePreviewView& preview, const AppConfig& config);
   void ResetDraft(const AppConfig& config);
+#if defined(KLIP_USE_LIBOBS)
+  void RenderTrimmer(const UiCommands& commands);
+  bool trim_open_=false;
+  std::filesystem::path trim_source_;
+  float trim_start_=0,trim_end_=0;
+  bool trim_preview_requested_=false;
+#endif
 
   AppConfig draft_;
   std::array<char, 512> clips_path_{};

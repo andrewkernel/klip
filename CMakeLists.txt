@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(Klip VERSION 2.0.1 LANGUAGES CXX)
+project(Klip VERSION 2.0.2 LANGUAGES CXX)
 
 option(KLIP_BUILD_TESTS "Build deterministic Klip core tests" ON)
 option(KLIP_BUILD_APP "Build the Windows capture application" ON)
@@ -30,8 +30,11 @@ add_library(klip_core STATIC
   src/core/encoder_tuning.cpp
   src/core/encoder_selection.cpp
   src/core/video_timeline.cpp)
+target_sources(klip_core PRIVATE src/core/update_manifest.cpp)
+target_sources(klip_core PRIVATE src/core/trim_range.cpp)
 target_include_directories(klip_core PUBLIC include)
 target_compile_features(klip_core PUBLIC cxx_std_20)
+target_compile_definitions(klip_core PUBLIC KLIP_APP_VERSION="${PROJECT_VERSION}")
 target_link_libraries(klip_core PUBLIC Threads::Threads)
 if(KLIP_USE_LIBOBS)
   target_compile_definitions(klip_core PUBLIC KLIP_USE_LIBOBS)

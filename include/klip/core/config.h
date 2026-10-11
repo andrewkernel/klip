@@ -43,6 +43,8 @@ struct HotkeyConfig {
 };
 
 struct AppConfig {
+  bool check_updates_on_launch = true;
+  bool trim_after_save = false;
   bool obs_replay_enabled = true;
   std::string obs_encoder_id = "auto";
   int obs_cq = 18;

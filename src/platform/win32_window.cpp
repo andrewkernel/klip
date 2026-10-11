@@ -291,6 +291,9 @@ LRESULT Win32Window::HandleMessage(UINT message, WPARAM w_param, LPARAM l_param)
       if (!visible_) ToggleVisibility();
       SetForegroundWindow(window_);
       return 0;
+    case WM_APP + 57:
+      redraw_requested_ = true;
+      return 0;
     case WM_APP + 54:
       if (l_param == WM_LBUTTONUP || l_param == WM_LBUTTONDBLCLK) {
         if (!visible_) ToggleVisibility();

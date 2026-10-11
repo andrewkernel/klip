@@ -83,6 +83,10 @@ class KlipApplication {
   Logger logger_;
 #if defined(KLIP_USE_LIBOBS)
   ObsEngine engine_;
+  Updater updater_;
+  ClipTrimmer trimmer_;
+  std::shared_ptr<TrimImage> trim_image_;
+  winrt::com_ptr<ID3D11ShaderResourceView> trim_texture_;
 #else
   RollingMediaBuffer media_buffer_;
   RecordingWriter recording_writer_;

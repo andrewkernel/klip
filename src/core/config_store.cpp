@@ -113,6 +113,8 @@ const char* ScalingName(VideoScalingMode mode) {
 }
 
 bool AssignValue(AppConfig& config, const std::string& key, const std::string& value) {
+  if (key == "check_updates_on_launch") return ParseBool(value, config.check_updates_on_launch);
+  if (key == "trim_after_save") return ParseBool(value, config.trim_after_save);
   if (key == "obs_replay_enabled") return ParseBool(value, config.obs_replay_enabled);
   if (key == "obs_cq") return ParseInteger(value, config.obs_cq);
   if (key == "obs_duration_priority") return ParseBool(value, config.obs_duration_priority);
@@ -319,6 +321,8 @@ bool SaveConfig(const std::filesystem::path& path, const AppConfig& config,
     return false;
   }
   output << "# Klip settings - changes made in the app are saved here.\n";
+  output << "check_updates_on_launch=" << (config.check_updates_on_launch ? "true" : "false") << '\n';
+  output << "trim_after_save=" << (config.trim_after_save ? "true" : "false") << '\n';
   output << "obs_replay_enabled=" << (config.obs_replay_enabled ? "true" : "false") << '\n';
   output << "obs_encoder_id=" << std::quoted(config.obs_encoder_id) << '\n';
   output << "obs_cq=" << config.obs_cq << '\n';
