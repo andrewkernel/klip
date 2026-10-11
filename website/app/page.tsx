@@ -133,7 +133,7 @@ export default function Home() {
             <p className="hero-copy">Capture the moment before you miss it.</p>
             <a className="button button--primary hero-button" href={INSTALLER_URL}>
               <span className="download-icon" aria-hidden="true">↓</span>
-              download Klip <strong>2.0.1 beta</strong>
+              download Klip <strong>2.0.2 beta</strong>
             </a>
             <div className="hero-meta" aria-label="Product highlights">
               <span>Windows 10 &amp; 11</span>
@@ -173,7 +173,7 @@ export default function Home() {
             <figure className="product-window reveal">
               <div className="product-window-bar">
                 <span><i /> Klip / dashboard</span>
-                <span>2.0.1 beta</span>
+                <span>2.0.2 beta</span>
               </div>
               <img src="/klip-dashboard.png" alt="Klip dashboard showing replay, recording, capture source, and audio controls" />
               <figcaption>
@@ -219,7 +219,7 @@ export default function Home() {
         <section className="section download-section post-features-section" id="download">
           <div className="editorial-meta reveal" aria-hidden="true">
             <span>download / windows</span>
-            <span>[ current: 2.0.1 beta ]</span>
+            <span>[ current: 2.0.2 beta ]</span>
           </div>
 
           <div className="download-panel reveal">
@@ -238,7 +238,7 @@ export default function Home() {
               <a className="button button--secondary button--large" href={REPOSITORY_URL} target="_blank" rel="noreferrer">
                 view source <span aria-hidden="true">↗</span>
               </a>
-              <a href="https://github.com/andrewkernel/klip/releases/tag/v2.0.1">dependency sources + checksums ↗</a>
+              <a href="https://github.com/andrewkernel/klip/releases/tag/v2.0.2">dependency sources + checksums ↗</a>
             </div>
 
             <div className="requirements">
@@ -251,7 +251,7 @@ export default function Home() {
 
             <div className="unsigned-note">
               <span aria-hidden="true">!</span>
-              <p><strong>public beta notice:</strong> this build is unsigned. verify its checksum before installing; do not disable Windows security. hardware and game compatibility vary, and broader testing is ongoing. clips and recordings save as MKV. duration-first mode limits bitrate to fit replay memory; demanding scenes may lose detail, including in recordings. let the buffer warm up after starting or changing settings. Linux downloads are not available yet.</p>
+              <p><strong>public beta notice:</strong> this build is unsigned. verify its checksum before installing; do not disable Windows security. hardware and game compatibility vary, and broader testing is ongoing. clips and recordings save as MKV. duration-first mode limits bitrate to fit replay memory; demanding scenes may lose detail, including in recordings. let the buffer warm up after starting or changing settings. install this version once to get approval-based in-app updates; portable copies still update manually. trimming saves a separate lossless copy with keyframe-aligned edges, not frame-exact cuts. Linux downloads are not available yet.</p>
             </div>
           </div>
         </section>
@@ -273,20 +273,20 @@ export default function Home() {
             <article className="release-card reveal">
               <div className="release-card-header">
                 <div>
-                  <span className="release-version">Klip 2.0 / v2.0.1 beta</span>
-                  <h3>full replay duration, with a bounded buffer</h3>
+                  <span className="release-version">Klip 2.0 / v2.0.2 beta</span>
+                  <h3>trim your clips. update in the app.</h3>
                 </div>
-                <time dateTime="2026-10-10">october 10, 2026</time>
+                <time dateTime="2026-10-11">october 11, 2026</time>
               </div>
               <ul>
-                <li><span>01 / replay</span><p>duration-first encoding is now the default, preventing high CQ bitrates from filling the replay buffer early</p></li>
-                <li><span>02 / duration</span><p>selecting a replay length no longer shrinks memory using an unrelated bitrate; keyframe headroom preserves the requested history after warmup</p></li>
-                <li><span>03 / performance</span><p>hidden and minimized dashboards stop rendering and computing visualization-only audio meters</p></li>
-                <li><span>04 / control</span><p>choose duration-first or constant quality; settings show the effective bitrate and explain the quality tradeoff</p></li>
-                <li><span>05 / verified</span><p>the 2.0.1 build saved at least 30 seconds in stress tests while recording, with real global shortcuts and decoded frame checks on NVIDIA</p></li>
-                <li><span>06 / beta</span><p>existing settings adopt the fix unless constant quality is explicitly selected. wider hardware testing continues; Linux desktop support is not released</p></li>
+                <li><span>01 / trim</span><p>choose start and end points with a scrub preview, then save a separate MKV copy without re-encoding video or audio</p></li>
+                <li><span>02 / precision</span><p>cuts snap outward to keyframes; the editor shows the actual range and keeps your original clip untouched</p></li>
+                <li><span>03 / updates</span><p>Settings → Updates checks signed release manifests. downloads require approval; installed copies can update and restart when capture tasks are idle</p></li>
+                <li><span>04 / safety</span><p>signatures, file hashes and sizes are checked before installation. active recordings, replay saves and trims prevent an update restart</p></li>
+                <li><span>05 / replay</span><p>keeps the duration-first replay fix, customizable global shortcuts, shared recording encoder and event-driven dashboard</p></li>
+                <li><span>06 / beta</span><p>older releases need this installer once to get the updater. clean-PC upgrades and wider hardware coverage remain in beta testing; Linux desktop support is not released</p></li>
               </ul>
-              <a href={INSTALLER_URL}>download Klip 2.0.1 <span aria-hidden="true">↓</span></a>
+              <a href={INSTALLER_URL}>download Klip 2.0.2 <span aria-hidden="true">↓</span></a>
             </article>
           </div>
         </section>

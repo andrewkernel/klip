@@ -1,0 +1,17 @@
+# Deploy only the website, never tool caches, binaries, source bundles or secrets.
+*
+!website
+!website/**
+website/node_modules/
+website/.env*
+website/dist/
+website/.vercel/
+website/.wrangler/
+website/work/
+website/outputs/
+website/.git-local-history-*/
+website/.next/
+website/.vinext/
+website/.vite/
+website/.pnp*
+website/*.tsbuildinfo

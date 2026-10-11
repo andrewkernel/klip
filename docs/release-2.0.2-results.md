@@ -47,6 +47,36 @@ Fortnite MKV. Earlier MKV/MP4 and three-track audio tests are documented in
 ./tools/run-obs-test.ps1 -BuildSuffix updater-trimmer -ReplayDurationTest -NoiseScene -GlobalHotkeys -AvMarkers -SeparateAudioTracks -Name <fresh-duration-run>
 ```
 
+## Duration and package checks
+
+The final duration/noise test passed with three 30-second replays during
+recording. Decoded spans were 30.067, 30.917 and 30.467 seconds; clips measured
+58.97–59.03 distinct transitions/sec with 1.61–1.64% repeats, and the recording
+58.90/sec with 1.84% repeats. PTS were monotonic and all A/V markers passed the
+40 ms gate. This is not a zero-drop claim. Evidence:
+`work/release-202-duration-20261011`.
+
+Desktop source commit: `4dfde7e6dd3e54f9791807c557a440556d769ecd`.
+Verified package directory: `artifacts/klip-2.0.2-verified-beta`.
+The first local packaging attempt used the pre-commit source archive and is
+not published; a new package was built with the committed 2.0.2 sources.
+Packaging now refuses a source HEAD with a mismatched project version.
+The verified source ZIP contains the updater/trimmer implementation.
+
+The extracted portable package passed all 701 file-manifest hashes, exact
+application/helper equality with the tested binaries, no test-fixture binaries,
+embedded 2.0.2 version and isolated loader/settings startup. Full package size
+is 65,362,749 bytes. Installer: 18,421,354 bytes; portable: 26,549,218 bytes.
+
+```powershell
+./tools/verify-obs-package.ps1 -PackageDirectory artifacts/klip-2.0.2-verified-beta -BuildDirectory build-obs-Release-updater-trimmer -Name <fresh-package-run>
+```
+
+Website: 8/8 rendered/API/artifact/signature tests passed, TypeScript passed,
+lint had no errors and three existing img-element warnings. The feed signature
+is independently checked against the app's public key, exact installer size,
+SHA256 and URL. Existing aggregate download-counter keys are retained.
+
 ## Remaining beta limitations
 
 Clean-Windows production bootstrap plus a higher signed production-package
