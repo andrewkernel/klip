@@ -4,3 +4,6 @@
 *.vcxproj text eol=crlf
 *.bat text eol=crlf
 *.cmd text eol=crlf
+
+# A signature covers canonical LF bytes. Windows checkouts must not rewrite it.
+website/public/updates/*.manifest text eol=lf
